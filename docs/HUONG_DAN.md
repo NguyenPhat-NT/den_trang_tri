@@ -1,4 +1,4 @@
-# Hướng dẫn Đèn Deco 1.0.0
+# Hướng dẫn Đèn Deco 1.1.0
 
 Ngày bàn giao: 10/10/2026. Dành cho Windows và Arduino IDE.
 
@@ -8,7 +8,7 @@ Ngày bàn giao: 10/10/2026. Dành cho Windows và Arduino IDE.
 - 20 LED WS2812B RGB: hai đoạn 10 LED, nối dữ liệu thành một chuỗi.
 - Bốn TTP223, nguồn 3,3 V, chế độ momentary/direct active high.
 - Nguồn USB 5 V–2 A. Vỏ và bố trí cơ khí do bạn thực hiện.
-- Web tiếng Việt nằm trong firmware. WiFi nhà 2,4 GHz và AP dự phòng.
+- Web tiếng Việt nằm trong firmware. Quét/chọn WiFi nhà 2,4 GHz, AP dự phòng không mật khẩu và địa chỉ mặc định `http://den-deco.local` chỉnh được.
 - Hẹn giờ, ba mục yêu thích, lưu trạng thái và cập nhật OTA qua trình duyệt.
 
 ## 2. Đấu nối
@@ -44,18 +44,18 @@ DOUT LED 19 để trống.
 
 Cả hai đoạn đều cần +5V/GND; nối dữ liệu không cấp nguồn cho đoạn tiếp theo. Bản thử dùng dữ liệu 3,3 V trực tiếp, chưa thêm tụ, điện trở hoặc IC đổi mức theo tài liệu. Kiểm chứng trên dây LED thật; nếu có nháy sai màu hoặc reset, kiểm tra nguồn và tín hiệu trước khi chỉnh phần mềm.
 
-TTP223 phải cho OUT cao khi chạm và thấp khi thả. Nếu module đang toggle/latch, đổi pad theo chính module đó. Tránh dùng GPIO 2/8/9 cho các nút vì liên quan khởi động; giữ 18/19 cho USB. GPIO 4/5 ở đây dùng GPIO, không đồng thời dùng JTAG ngoài.
+TTP223 phải cho OUT cao khi chạm và thấp khi thả. Nếu module đang toggle/latch, đổi pad theo chính module đó. Bốn đầu vào trong firmware dùng `INPUT_PULLDOWN`: chân chưa đấu cảm ứng được kéo về mức thấp để không tự phát lệnh. Sau khi đấu TTP223 vẫn cần kiểm tra OUT và thử chạm/giữ qua vỏ thực tế; kéo xuống không thay cho hiệu chỉnh độ nhạy cảm ứng. Tránh dùng GPIO 2/8/9 cho các nút vì liên quan khởi động; giữ 18/19 cho USB. GPIO 4/5 ở đây dùng GPIO, không đồng thời dùng JTAG ngoài.
 
 ## 3. Nạp lần đầu bằng Arduino IDE trên Windows
 
-1. Giải nén cả gói; giữ `DenDeco.ino`, `Config.h`, `Core.h`, `Storage.h`, `WebUI.h` trong cùng thư mục `DenDeco`.
-2. Trong Boards Manager, cài **esp32 by Espressif Systems**, chọn phiên bản **2.0.17**. Nếu IDE chưa có nguồn package, thêm URL sau vào Preferences → Additional Boards Manager URLs:
+1. Giải nén cả gói; giữ `DenDeco.ino`, `Config.h`, `Core.h`, `NetworkPolicy.h`, `Storage.h`, `WebUI.h` trong cùng thư mục `DenDeco`.
+2. Trong Boards Manager, giữ/cài **esp32 by Espressif Systems 3.3.1** như bộ IDE bạn đang dùng. Nếu IDE chưa có nguồn package, thêm URL sau vào Preferences → Additional Boards Manager URLs:
 
 ```text
 https://espressif.github.io/arduino-esp32/package_esp32_index.json
 ```
 
-3. Trong Library Manager, cài **Adafruit NeoPixel 1.12.5** và **ArduinoJson 7.4.2**. WiFi, WebServer, Preferences, ESPmDNS và Update đi kèm core ESP32.
+3. Trong Library Manager, giữ/cài **Adafruit NeoPixel 1.15.5** và **ArduinoJson 7.4.3**. WiFi, WebServer, Preferences, ESPmDNS và Update đi kèm core ESP32.
 4. Mở `DenDeco/DenDeco.ino`. Chọn board **ESP32C3 Dev Module**.
 5. Đặt thông số Tools:
 
@@ -75,29 +75,26 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 7. Bấm Verify rồi Upload. Nếu không nhận COM, giữ BOOT, bấm/thả RESET rồi thả BOOT; chọn lại COM và nạp. Các bo có thể ghi nút là B/BOOT và R/RESET.
 8. Sau nạp, bấm RESET nếu cần. Mở Serial Monitor **115200 baud**. Lần đầu chưa có bản lưu, đèn ở trạng thái tắt.
 
-Các kiểm tra biên dịch trong gói dùng PlatformIO và cùng phiên bản core/thư viện trên. Chưa kiểm chứng trực tiếp thao tác Upload trong Arduino IDE trên bo của bạn. Nếu bo có dung lượng flash khác 4 MB, không dùng sẵn file OTA 4 MB; chỉnh cấu hình và biên dịch lại cho bo thực tế.
+Mã nguồn đã biên dịch với Arduino CLI, core 3.3.1 và các phiên bản thư viện trên; file OTA 1.1.0 trong gói dùng bộ này. Profile PlatformIO trong repo cũng đã build với core 2.0.17, NeoPixel 1.12.5 và ArduinoJson 7.4.2. Bạn có thể giữ bộ 3.3.1 hiện tại, không cần đổi về 2.0.17. Chưa kiểm chứng trực tiếp thao tác Upload trên bo của bạn. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
 
 ## 4. Kết nối web lần đầu
 
-Khi chưa có WiFi, ESP mở AP tên `DenDeco-XXXXXX`. Mật khẩu AP ngẫu nhiên riêng, 12 ký tự, được lưu trên đèn và in trong Serial Monitor khi AP mở:
-
-```text
-AP: DenDeco-XXXXXX
-AP password: <mật khẩu riêng được đèn tạo>
-Open http://192.168.4.1
-```
-
-Ghi lại mật khẩu để dùng khi AP dự phòng mở. Firmware không dùng mật khẩu chung cho mọi đèn. Nếu cửa sổ Serial mở quá muộn, mở sẵn rồi bấm RESET để xem lại dòng AP.
+Khi chưa có WiFi đã lưu, ESP mở AP tên `DenDeco-XXXXXX`, **không có mật khẩu**. `XXXXXX` là mã riêng của từng bo. Nối trực tiếp AP rồi mở `http://192.168.4.1`; không cần lấy mật khẩu AP từ Serial Monitor.
 
 1. Dùng điện thoại hoặc PC nối AP của đèn; chọn giữ kết nối nếu hệ điều hành báo không có Internet.
 2. Mở **http://192.168.4.1**; dùng HTTP, không dùng HTTPS.
-3. Mở Cài đặt & kết nối, nhập WiFi nhà 2,4 GHz và mật khẩu rồi bấm Lưu & kết nối. Mật khẩu đã lưu không được gửi lại cho trình duyệt.
-4. Sau khoảng 1–2 giây, đèn thử kết nối. Nếu vẫn ở AP, bạn có thể xem IP WiFi trong trang. Trên WiFi nhà, mở IP đó hoặc `http://den-deco-xxxxxx.local` nếu Windows/điện thoại hỗ trợ mDNS.
-5. Khi không kết nối được sau 30 giây, AP dự phòng mở. Cảm ứng và hiệu ứng vẫn hoạt động trong quá trình thử kết nối.
+3. Mở **Cài đặt & kết nối → Quét WiFi xung quanh**. Đợi kết quả rồi chọn mạng để điền tên WiFi. ESP32-C3 chỉ quét và kết nối **2,4 GHz**; với mạng ẩn, nhập đúng SSID thủ công. Trang báo đang quét, danh sách tìm thấy hoặc lỗi để thử lại. Quét chạy bất đồng bộ; hiệu ứng và cảm ứng tiếp tục hoạt động, nhưng thời gian phản hồi qua mạng cần kiểm chứng trên bo thật.
+4. Nhập mật khẩu WiFi nhà rồi bấm **Lưu & kết nối**. Để trống mật khẩu với cùng SSID sẽ giữ mật khẩu đang lưu; chỉ chọn **Mạng không có mật khẩu** nếu mạng nhà là mạng mở. Mật khẩu đã lưu không được gửi lại cho trình duyệt.
+5. Theo dõi trạng thái kết nối trên trang. **Ngay khi đèn kết nối WiFi nhà và nhận IP từ DHCP, AP tự tắt**, nên trang đang mở qua AP sẽ mất kết nối. Chuyển điện thoại/PC về WiFi nhà và mở **http://den-deco.local**, hoặc địa chỉ đã chỉnh trước đó.
+6. Nếu kết nối thất bại sau **30 giây**, AP dự phòng mở để sửa mạng/mật khẩu. Nếu router mất kết nối, đèn thử nối lại và mở AP sau 30 giây chưa khôi phục; khi nhận IP WiFi nhà trở lại, AP tự tắt ngay. Điều khiển cảm ứng vẫn dùng được trong lúc đèn thử kết nối.
 
-AP đã mở sẽ được giữ đến lần khởi động lại để tránh ngắt phiên cấu hình. Khi khởi động lại và WiFi nhà kết nối bình thường trong 30 giây, AP không mở. Có thể xem IP trong Serial Monitor hoặc danh sách DHCP của router. IP phụ thuộc router; đặt DHCP reservation theo MAC nếu muốn ổn định.
+AP chỉ mở khi chưa cấu hình WiFi nhà, khi không kết nối được trong 30 giây hoặc khi bạn xóa/reset WiFi để cấu hình lại. AP không bật thường trực khi WiFi nhà hoạt động. Có thể xóa mạng từ web bằng **Xóa WiFi đã lưu**, hoặc giữ đúng **+ và − đồng thời 5 giây** như mục 5.
 
-Đổi tên đèn chỉ đổi nhãn hiển thị; AP và hostname dùng mã thiết bị để nhiều bộ Đèn Deco không trùng tên mạng. Để trống mật khẩu khi nhập cùng SSID sẽ giữ mật khẩu đang lưu; chọn Mạng không có mật khẩu khi dùng mạng mở.
+**Tên đèn** là nhãn hiển thị. **Tên truy cập trong WiFi nhà** quyết định địa chỉ `.local`: mặc định `den-deco` cho `http://den-deco.local`. Có thể đổi thành `den-phong-ngu`, `den-ban`… bằng nút **Lưu tên & địa chỉ**. Dùng 1–48 ký tự chữ thường a–z, số hoặc dấu gạch ngang; không bắt đầu/kết thúc bằng gạch ngang, không có khoảng trắng và không nhập `.local`. Sau khi đổi, dùng địa chỉ hiển thị trong **Địa chỉ trong WiFi nhà**. AP vẫn dùng mã bo `DenDeco-XXXXXX`.
+
+Với nhiều đèn trên cùng mạng, đặt **tên truy cập khác nhau** cho từng đèn. Khi mDNS phát hiện trùng tên, firmware tự thêm mã bo sáu ký tự viết thường vào địa chỉ đang dùng, ví dụ `http://den-deco-a1b2c3.local`; nếu vẫn trùng, thêm tiếp `-2`, `-3`… Đèn giữ nguyên tên truy cập bạn đã lưu và chỉ thay tên thực tế của phiên kết nối, nên địa chỉ sau khi kết nối lại có thể thay đổi. Dùng địa chỉ trong **Địa chỉ trong WiFi nhà** hoặc Serial Monitor, không suy ra địa chỉ từ ô tên đã lưu. Cơ chế trùng tên còn cần thử với nhiều đèn thật; địa chỉ IP là cách truy cập dự phòng.
+
+Địa chỉ `.local` dùng mDNS và chỉ có hiệu lực trong mạng nội bộ có hỗ trợ; điện thoại/PC phải ở cùng mạng với đèn. Mạng khách có cách ly thiết bị, router chặn multicast hoặc máy chưa hỗ trợ mDNS có thể không mở được địa chỉ này. Khi đó xem IP trong Serial Monitor 115200 baud hoặc danh sách DHCP của router rồi mở `http://<IP-của-đèn>`. IP phụ thuộc router; có thể đặt DHCP reservation theo MAC nếu muốn giữ IP ổn định.
 
 ## 5. Sử dụng bốn nút
 
@@ -108,9 +105,11 @@ AP đã mở sẽ được giữ đến lần khởi động lại để tránh 
 | + | Tăng 5 điểm sáng | Sau 0,6 giây, tăng 1 điểm mỗi 50 ms |
 | M | Sang chế độ kế tiếp | 2 giây: hẹn 30 phút hoặc hủy hẹn giờ đang chạy |
 
-Giữ rồi thả không phát thêm chạm ngắn. Nhiều nút cùng lúc sẽ hủy phần thao tác tiếp theo và chờ thả hết; lệnh giữ đã thực hiện trước đó không thể thu hồi. Sau cấp nguồn, firmware bỏ qua cảm ứng ít nhất 1 giây và chờ tất cả nút được thả.
+Giữ rồi thả không phát thêm chạm ngắn. **Ngoại lệ cho hai nút + và −:** giữ đúng hai nút này đồng thời liên tục **5 giây** để reset WiFi nhà. Thao tác chỉ xóa SSID/mật khẩu WiFi nhà và mở AP không mật khẩu; giữ trạng thái ánh sáng, mục yêu thích, tên đèn và tên truy cập. Thả trước 5 giây hoặc chạm thêm Nguồn/M sẽ hủy thao tác reset. Sau reset cần thả hết các nút mới nhận thao tác tiếp theo.
 
-Khi tắt, +/−/M được bỏ qua. Giữ Nguồn vẫn bật chế độ ngủ. Nút tăng/giảm dừng ở 1 và 100, không tự tắt.
+Các tổ hợp nhiều nút khác sẽ hủy phần thao tác tiếp theo và chờ thả hết; lệnh giữ đã thực hiện trước đó không thể thu hồi. Sau cấp nguồn, firmware bỏ qua cảm ứng ít nhất 1 giây và chờ tất cả nút được thả. Vì vậy không dùng việc giữ +/− sẵn lúc cấp nguồn để reset mạng; đợi hết giai đoạn khởi động, thả hết rồi giữ lại.
+
+Khi tắt, các thao tác riêng +/−/M được bỏ qua; tổ hợp +/− giữ 5 giây vẫn reset được WiFi. Giữ Nguồn vẫn bật chế độ ngủ. Nút tăng/giảm dừng ở 1 và 100, không tự tắt.
 
 Thứ tự M: Ngủ → Một màu → Chuyển màu chậm → Ánh nến → Cầu vồng chậm → Ánh sáng dâng lên → Ngủ.
 
@@ -135,7 +134,7 @@ Thanh sáng 1–100 là thang cảm nhận, được ánh xạ gamma 2,2. Trần
 
 Sau thay đổi thực sự, đèn áp dụng ngay rồi chờ **10 giây từ thay đổi cuối** để lưu. Web hiển thị Đang chờ lưu, Đã lưu sau khi ghi/đọc kiểm tra thành công, hoặc lỗi lưu. Chưa có bản lưu sẽ hiển thị Cấu hình mặc định.
 
-Lưu: bật/tắt, RGB, chế độ, độ sáng, tốc độ, mức ngủ riêng, trần đầu ra và ba mục yêu thích. Tên đèn, mạng và mật khẩu AP lưu riêng khi bấm áp dụng. Không lưu pha hiệu ứng, khung hình hoặc thời gian hẹn giờ còn lại.
+Lưu: bật/tắt, RGB, chế độ, độ sáng, tốc độ, mức ngủ riêng, trần đầu ra và ba mục yêu thích. Tên đèn, tên truy cập, SSID và mật khẩu WiFi nhà lưu riêng khi bấm áp dụng. AP không có mật khẩu. Reset WiFi chỉ xóa SSID/mật khẩu mạng nhà; giữ cấu hình ánh sáng và tên. Không lưu pha hiệu ứng, khung hình hoặc thời gian hẹn giờ còn lại.
 
 Rút nguồn trước 10 giây sẽ mất phần chỉnh chưa lưu. Hiệu ứng, chuyển sáng và hẹn giờ giảm sáng không ghi flash mỗi khung hình. Hết hẹn giờ tạo thay đổi tắt, rồi vẫn chờ 10 giây để lưu.
 
@@ -146,12 +145,12 @@ Firmware có hai bản NVS, CRC và số thế hệ; boot chọn bản hợp l�
 Lần nạp đầu tiên vẫn qua USB để có firmware và bảng phân vùng OTA. Sau đó dùng web qua WiFi nhà hoặc AP:
 
 1. Trong Arduino IDE, giữ nguyên board 4 MB và Partition Scheme có OTA; chọn Sketch → Export Compiled Binary.
-2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.0.0-ota.bin`.
+2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.1.0-ota.bin`.
 3. Mở Cập nhật firmware qua WiFi trên web, chọn file, bấm Cập nhật firmware và xác nhận.
 4. Firmware lưu ngay các thay đổi đang chờ trước khi bắt đầu OTA, thay vì chờ 10 giây trong phiên bảo trì này. Khi lưu không thành công hoặc schema không hỗ trợ, OTA chưa bắt đầu.
 5. Giữ nguồn và kết nối ổn định. Ánh sáng giữ khung hình hiện tại; cảm ứng, hiệu ứng và xử lý hẹn giờ tạm dừng trong lúc upload; bộ đếm thời gian chạy vẫn trôi. Không dùng điều khiển bình thường cho tới khi hoàn tất.
 6. File được ghi vào phân vùng ứng dụng còn lại, kiểm tra kích thước, header/chip ESP32-C3, dấu ứng dụng và kiểm tra ảnh của thư viện Update. Khi hợp lệ, đèn trả thành công rồi khởi động lại sau khoảng 1,8 giây. Trang thử đồng bộ lại sau khoảng 7 giây.
-7. Đèn khôi phục trạng thái đã lưu và WiFi. Hẹn giờ không tiếp tục sau khởi động, giống quy tắc mất điện.
+7. Đèn khôi phục trạng thái đã lưu, tên/tên truy cập và WiFi. Hẹn giờ không tiếp tục sau khởi động, giống quy tắc mất điện. Nếu đang OTA qua AP và đã lưu WiFi nhà hợp lệ, sau reboot đèn nối mạng nhà rồi tắt AP; chuyển điện thoại/PC về mạng nhà và mở địa chỉ `.local` hoặc IP.
 
 File của bản này nhỏ hơn giới hạn 1.310.720 byte mỗi phân vùng. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
 
@@ -162,12 +161,12 @@ Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, 
 1. Nạp với nguồn LED tháo ra khi cần tránh tải trên USB PC.
 2. Có thể nạp `LED_Check/LED_Check.ino` với cùng cấu hình IDE để thử dây ở mức thấp: toàn bộ LED lần lượt đỏ/xanh lá/xanh dương, sau đó LED 0/9/10/19 sáng riêng, rồi từng cặp đi lên. Serial Monitor báo bước thử và OUT từng cảm ứng. Sketch này không sửa NVS; sau thử nạp lại `DenDeco/DenDeco.ino`. Hoặc sau đấu đúng và dùng nguồn hằng ngày, bật Một màu ở mức thấp để kiểm tra các kênh. Nếu xanh/đỏ đổi chỗ, sửa `NEO_GRB` ở sketch theo dây thực tế rồi nạp lại.
 3. Thử Dâng lên: hai bên phải cùng đi từ đáy lên. Nếu ngược một bên, kiểm tra chiều nối/chỉ số.
-4. Thử từng nút, chạm 20 lần, giữ và chạm đồng thời qua vỏ.
+4. Thử từng nút, chạm 20 lần, giữ và chạm đồng thời qua vỏ. Kiểm tra thêm giữ đúng +/− 5 giây reset WiFi và giữ ngắn hơn/chạm nút thứ ba không reset. Khi chưa đấu cảm ứng, các chân bỏ trống phải không tự phát lệnh.
 5. Kiểm tra chỉnh → chờ lưu → reset, và chỉnh → rút nguồn sớm → bật lại.
-6. Nhập sai WiFi để kiểm tra AP dự phòng; dùng AP cập nhật lại thông tin.
+6. Quét/chọn mạng, thử mật khẩu sai để kiểm tra AP dự phòng; dùng AP cập nhật lại thông tin. Khi nhập đúng và nhận IP, xác nhận AP tắt ngay. Thử tắt/bật router để kiểm tra mở AP sau 30 giây và tự tắt khi mạng khôi phục. Thử địa chỉ `.local`, IP và tên riêng nếu dùng nhiều đèn.
 7. Chạy trắng ở trần 30% và tải WiFi trong 30 phút; ghi điện áp, dòng và nhiệt. Dừng thử nếu có reset, sai màu hoặc nhiệt bất thường để xử lý đường nguồn trước khi dùng hàng ngày.
 8. Thử OTA với file gói bàn giao, rồi kiểm tra lại phiên bản và cấu hình.
 
-Không thấy AP: đợi 30 giây nếu đã lưu mạng; nếu WiFi nhà đang kết nối, xem IP router/Serial. Không hiện mật khẩu AP: mở Serial Monitor trước rồi bấm RESET. Đèn chạm tự bật: kiểm tra module direct active high, dây và vùng cảm ứng/vỏ. OTA báo file sai: chọn đúng ứng dụng `.ino.bin`, không dùng bootloader/merged.
+Không thấy AP: đợi 30 giây nếu đã lưu mạng; nếu WiFi nhà đang kết nối, AP đã tắt đúng thiết kế. Muốn cấu hình lại từ cảm ứng, giữ đúng +/− 5 giây sau khi đã khởi động và thả hết nút. AP không yêu cầu mật khẩu. Trang AP mất kết nối ngay sau Lưu & kết nối: chuyển sang WiFi nhà và mở `.local` hoặc IP. Không mở được `.local`: kiểm tra cùng mạng, tên truy cập và dùng IP từ router/Serial. Không thấy mạng khi quét: xác nhận mạng 2,4 GHz, thử lại hoặc nhập SSID thủ công. Đèn chạm tự bật: kiểm tra module direct active high, dây và vùng cảm ứng/vỏ. OTA báo file sai: chọn đúng ứng dụng `.ino.bin`, không dùng bootloader/merged.
 
-Bộ bàn giao đã kiểm tra biên dịch, logic và giao diện bằng mô phỏng. Các kiểm tra điện, độ nhạy, nhiệt, truyền dữ liệu và OTA thật cần thực hiện trên thiết bị của bạn; xem `KIEM_THU.md` để ghi kết quả.
+Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. **Các kiểm tra điện, độ nhạy/chạm qua vỏ, WiFi/mDNS, truyền dữ liệu và OTA trên phần cứng đều đang chờ thực hiện** trên bộ đèn của bạn; xem `KIEM_THU.md` để ghi kết quả.

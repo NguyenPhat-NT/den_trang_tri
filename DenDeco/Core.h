@@ -62,29 +62,50 @@ class Controller {
  }
  Result tick(uint32_t now){if(timer.active&&timer.remaining(now)==0)return apply({Action::Power,0},now);return {};}
 };
-enum class TouchEvent {PowerShort,SleepHold,MinusShort,MinusStep,PlusShort,PlusStep,ModeShort,TimerHold};
+enum class TouchEvent {PowerShort,SleepHold,MinusShort,MinusStep,PlusShort,PlusStep,ModeShort,TimerHold,WiFiResetHold};
 class Touch {
  struct Button {bool raw=false,down=false,held=false;uint32_t rawAt=0,pressedAt=0,repeatedAt=0;};
- Button buttons[4];uint32_t boot=0;bool ready=false,blocked=false;
+ Button buttons[4];uint32_t boot=0,resetAt=0;bool ready=false,blocked=false,resetPending=false,resetStarted=false,resetFired=false;
  public:
- void begin(uint32_t now){boot=now;ready=false;blocked=false;for(auto& b:buttons)b=Button{};}
+ void begin(uint32_t now){boot=now;ready=false;blocked=resetPending=resetStarted=resetFired=false;for(auto& b:buttons)b=Button{};}
  template<class Emit> void scan(const bool raw[4],uint32_t now,Emit emit){
-  int rawCount=0,downCount=0;
+  uint8_t rawMask=0,downMask=0;
   for(int i=0;i<4;i++){
-   auto& b=buttons[i];rawCount+=raw[i];
+   auto& b=buttons[i];if(raw[i])rawMask|=uint8_t(1u<<i);
    if(b.raw!=raw[i]){b.raw=raw[i];b.rawAt=now;}
    if(b.raw!=b.down&&uint32_t(now-b.rawAt)>=Config::DEBOUNCE_MS){
     b.down=b.raw;
     if(b.down){b.pressedAt=now;b.repeatedAt=now;b.held=false;}
-    else if(ready&&!blocked&&!b.held&&rawCount<=1){
-     // Release events are emitted below after checking all inputs.
+   }
+   if(b.down)downMask|=uint8_t(1u<<i);
+  }
+  if(!ready){if(uint32_t(now-boot)>=Config::TOUCH_STARTUP_MS&&rawMask==0&&downMask==0){ready=true;for(auto& b:buttons)b.held=true;}return;}
+  if(blocked){
+   // Newly debounced presses must also be consumed while waiting for a full release.
+   for(auto& b:buttons)b.held=true;
+   if(rawMask==0&&downMask==0)blocked=false;
+   return;
+  }
+  constexpr uint8_t resetMask=(1u<<1)|(1u<<2);
+  if(resetPending||rawMask==resetMask){
+   // Start timing only when both + and - have passed debounce. Any other
+   // input or a physical release cancels the entire gesture, even before
+   // release debounce finishes, so no single-button action can escape it.
+   for(auto& b:buttons)b.held=true;
+   if(rawMask!=resetMask||(downMask&uint8_t(~resetMask))!=0){
+    blocked=true;resetPending=resetStarted=resetFired=false;
+   }else{
+    resetPending=true;
+    if(downMask==resetMask){
+     if(!resetStarted){resetStarted=true;resetAt=now;}
+     else if(!resetFired&&uint32_t(now-resetAt)>=Config::WIFI_RESET_HOLD_MS){resetFired=true;emit(TouchEvent::WiFiResetHold);}
     }
    }
-   downCount+=b.down;
+   return;
   }
-  if(!ready){if(uint32_t(now-boot)>=Config::TOUCH_STARTUP_MS&&rawCount==0&&downCount==0){ready=true;for(auto& b:buttons)b.held=true;}return;}
-  if(rawCount>1||downCount>1){blocked=true;for(auto& b:buttons)b.held=true;}
-  if(blocked){if(rawCount==0&&downCount==0)blocked=false;return;}
+  if((rawMask&&(rawMask&(rawMask-1)))||(downMask&&(downMask&(downMask-1)))){
+   blocked=true;for(auto& b:buttons)b.held=true;return;
+  }
   for(int i=0;i<4;i++){
    auto& b=buttons[i];
    if(!b.down){

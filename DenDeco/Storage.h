@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include "Core.h"
+#include "NetworkPolicy.h"
 namespace Deco {
 inline uint32_t crc32(const uint8_t* p,size_t n){uint32_t c=0xffffffffu;while(n--){c^=*p++;for(int k=0;k<8;k++)c=(c>>1)^(0xedb88320u&(0u-(c&1)));}return ~c;}
 inline void put32(uint8_t* p,uint32_t n){for(int i=0;i<4;i++)p[i]=uint8_t(n>>(8*i));}
@@ -56,21 +57,52 @@ class Storage {
  }
  void tick(const Settings& s,uint32_t now){if(!dirty||uint32_t(now-lastChange)<Config::SAVE_IDLE_MS||(tried&&uint32_t(now-lastAttempt)<Config::SAVE_RETRY_MS))return;lastAttempt=now;tried=true;saveNow(s);}
 };
-struct NetworkConfig {String name="Đèn Deco",ssid,password,apPassword;};
+struct NetworkConfig {String name="Đèn Deco",ssid,password,hostname="den-deco";};
+inline bool validNetworkConfig(const NetworkConfig& c){
+ return c.name.length()>=1&&c.name.length()<=48&&c.ssid.length()<=32&&c.password.length()<=64&&validHostname(c.hostname.c_str());
+}
 class NetworkStorage {
  Preferences prefs;bool opened=false;
  public:
+ bool blocked=false;
  bool begin(NetworkConfig& c){
-  opened=prefs.begin("deco-network",false);if(!opened)return false;size_t n=prefs.getBytesLength("config");if(!n)return true;if(n<4||n>768)return false;
-  uint8_t bytes[768];if(prefs.getBytes("config",bytes,n)!=n||get32(bytes)!=crc32(bytes+4,n-4))return false;
-  JsonDocument d;if(deserializeJson(d,bytes+4,n-4)||d["schema"].as<int>()!=1||!d["name"].is<String>()||!d["ssid"].is<String>()||!d["password"].is<String>()||!d["apPassword"].is<String>())return false;
-  NetworkConfig v;v.name=d["name"].as<String>();v.ssid=d["ssid"].as<String>();v.password=d["password"].as<String>();v.apPassword=d["apPassword"].as<String>();
-  if(v.name.length()<1||v.name.length()>48||v.ssid.length()>32||v.password.length()>64||(v.apPassword.length()!=0&&v.apPassword.length()!=12))return false;c=v;return true;
+  blocked=false;
+  opened=prefs.begin("deco-network",false);
+  if(!opened)return false;
+  size_t n=prefs.getBytesLength("config");
+  if(!n)return true;
+  if(n<4||n>768)return false;
+  uint8_t bytes[768];
+  if(prefs.getBytes("config",bytes,n)!=n||get32(bytes)!=crc32(bytes+4,n-4))return false;
+  JsonDocument d;
+  if(deserializeJson(d,bytes+4,n-4)||!d["schema"].is<uint32_t>())return false;
+  uint32_t schema=d["schema"].as<uint32_t>();
+  // An authentic future version is kept intact. A damaged CRC, however,
+  // leaves provisioning available so a supported configuration can repair it.
+  if(schema>2){blocked=true;return false;}
+  if(schema<1||!d["name"].is<String>()||!d["ssid"].is<String>()||!d["password"].is<String>())return false;
+  NetworkConfig v;v.name=d["name"].as<String>();v.ssid=d["ssid"].as<String>();v.password=d["password"].as<String>();
+  if(schema==1){
+   if(!d["apPassword"].is<String>())return false;
+   String oldAP=d["apPassword"].as<String>();
+   if(oldAP.length()!=0&&oldAP.length()!=12)return false;
+   // Preserve the existing home WiFi credentials while retiring the AP key.
+   v.hostname="den-deco";
+  }else{
+   if(!d["hostname"].is<String>())return false;
+   v.hostname=d["hostname"].as<String>();
+  }
+  if(!validNetworkConfig(v))return false;
+  c=v;return true;
  }
  bool save(const NetworkConfig& c){
-  if(!opened)return false;JsonDocument d;d["schema"]=1;d["name"]=c.name;d["ssid"]=c.ssid;d["password"]=c.password;d["apPassword"]=c.apPassword;String text;serializeJson(d,text);
-  if(text.length()>764)return false;uint8_t bytes[768];put32(bytes,crc32(reinterpret_cast<const uint8_t*>(text.c_str()),text.length()));memcpy(bytes+4,text.c_str(),text.length());size_t n=text.length()+4;
-  if(prefs.putBytes("config",bytes,n)!=n)return false;uint8_t check[768];return prefs.getBytes("config",check,n)==n&&memcmp(bytes,check,n)==0;
+  if(!opened||blocked||!validNetworkConfig(c))return false;
+  JsonDocument d;d["schema"]=2;d["name"]=c.name;d["ssid"]=c.ssid;d["password"]=c.password;d["hostname"]=c.hostname;
+  String text;serializeJson(d,text);
+  if(text.length()>764)return false;
+  uint8_t bytes[768];put32(bytes,crc32(reinterpret_cast<const uint8_t*>(text.c_str()),text.length()));memcpy(bytes+4,text.c_str(),text.length());size_t n=text.length()+4;
+  if(prefs.putBytes("config",bytes,n)!=n)return false;
+  uint8_t check[768];return prefs.getBytesLength("config")==n&&prefs.getBytes("config",check,n)==n&&memcmp(bytes,check,n)==0;
  }
 };
 }
