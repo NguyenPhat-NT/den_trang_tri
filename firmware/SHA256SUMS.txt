@@ -1,0 +1,1 @@
+48d6a6d668dd4a18347aa8d8ccfcedb4b0f8c59c3f3b23cc3ebc075d92ae36fe  DenDeco-1.0.0-ota.bin
