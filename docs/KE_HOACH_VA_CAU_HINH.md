@@ -1,8 +1,18 @@
-# Cấu hình và kế hoạch Đèn Deco 1.2.1
+# Cấu hình và kế hoạch Đèn Deco 1.3.0
 
 ## Các quyết định đã chốt trong chat
 
 Phạm vi: firmware, web trên ESP và hướng dẫn đấu nối/nạp. Người dùng tự xử lý cơ khí/vỏ. ESP32-C3 SuperMini, bốn TTP223, 20 WS2812B và nguồn 5 V–2 A. Tên Đèn Deco; WiFi nhà + AP dự phòng. Máy nạp Windows, Arduino IDE. Bổ sung OTA qua web theo yêu cầu mới.
+
+Bản 1.3.0 thêm tối đa tám dòng lịch tuần ON/OFF theo giờ Internet Việt Nam UTC+7. Mỗi dòng ON tham chiếu trực tiếp một trong ba mục yêu thích (mã 0–2, hiển thị Mục 1–3), đọc nội dung lúc chạy; mục trống/hỏng thì bỏ qua an toàn. Kế hoạch lưu riêng trong NVS `deco-plan`, không đổi schema ánh sáng 2 và không sao chép lại màu của các mục yêu thích.
+
+ESP đồng bộ SNTP bất đồng bộ khi WiFi nhà có Internet. AP lần đầu không có nguồn giờ Internet nên lịch chờ đồng bộ. Sau đồng bộ trong phiên chạy, mất mạng vẫn giữ giờ và chạy lịch; sau reboot/mất điện cần đồng bộ lại. Không chạy bù sự kiện bị lỡ sau boot/sửa lịch/nhảy giờ/OTA; lần đồng bộ đầu chỉ lấy phút hiện tại làm mốc, đợi phút tiếp theo. Web giữ bản nháp các ô đang sửa khi polling.
+
+Tọa độ mặc định đã xác nhận: TP.HCM **10.776, 106.7**. Vĩ độ chỉnh −89…89, kinh độ −180…180; giờ luôn UTC+7. Hai tự động mặt trời độc lập, mặc định tắt, đều có mask ngày trong tuần và offset ±120 phút. Bình minh bắt đầu **tại** mặt trời mọc cộng offset, khi đang tắt tăng từ 0 lên màu ấm RGB (255,160,72) ở mức 35% hoặc mục yêu thích; thời lượng mặc định 30 phút, chỉnh 1–120 phút. Mặt trời lặn cộng offset bật màu ấm này hoặc mục yêu thích. Công thức thiên văn kiểu NOAA tính tại ESP theo ngày/tọa độ, không dùng API/dự báo thời tiết; đường chân trời/khúc xạ là xấp xỉ và không xét mây/địa hình.
+
+Nếu đã bật, ramp đi từ mức đang hiển thị tới mức đích. Trạng thái nền phải lưu được trước khi chạy Bình minh; nội suy chỉ trong RAM, lưu cấu hình cuối khi hoàn tất hoặc khi dừng bằng tay/lưu kế hoạch/OTA. Mất nguồn trong ramp khôi phục trạng thái nền, không chạy tiếp giữa chừng.
+
+Các điều khiển ánh sáng tay dừng ramp bình minh đang chạy, không hủy các lịch tương lai. Sự kiện tự động được áp dụng hủy countdown đang chạy. Trong cùng phút, OFF tuần thắng; nếu không OFF thì ON tuần thắng mặt trời và dòng ON cuối thắng các dòng ON trước; nếu chỉ mặt trời xung đột thì dusk thắng dawn. Chỉ áp dụng một kết quả để không bật/tắt trung gian. Hiệu ứng Hoàng hôn mã 11 giữ nguyên và độc lập với lịch bật lúc mặt trời lặn.
 
 Bản 1.2.1 xử lý phản hồi từ lần thử 1.2.0 trên đèn thật: bước chuyển màu còn lớn và Lấp lánh khó thấy do mật độ LED lớn. Mục tiêu khung hình khoảng 60/s với `FRAME_MS=16` thay cho 33 ms; bảy hiệu ứng chuyển màu mã 2/4/8/9/10/11/13 dùng làm tròn phân bố phần lẻ theo vị trí cố định giữa mười tầng LED, ngưỡng làm tròn đối xứng giữa hai nhánh. Dải màu Cầu vồng theo thứ tự LED giữ nguyên. Mỗi lựa chọn làm tròn chỉ khác một mã đầu ra 8 bit, không dùng dithering theo thời gian/PWM phần mềm; Ngủ và Một màu vẫn làm tròn tới mã gần nhất. Pha chạy liên tục khi đổi tốc độ và qua chu kỳ thời gian. Chu kỳ nhanh nhất Chuyển màu chậm/Cầu vồng tăng từ 1/5 giây lên 8/12 giây. Kết quả cảm nhận qua vỏ cần người dùng thử lại.
 
@@ -34,9 +44,12 @@ Chế độ ngủ nhớ riêng mức đã chỉnh, ban đầu 5%. Các mặc đ�
 | Hướng dẫn trong web | Thao tác cảm ứng, chế độ/màu/tốc độ, lưu, mạng và OTA | Bản 1.2.0 cập nhật; kiểm tra trên điện thoại sau nâng cấp |
 | Web/WiFi | Web nhúng, polling 250 ms; quét 2,4 GHz, trạng thái mạng, hostname và AP dự phòng | Bản 1.1.0 cập nhật; kết quả kiểm tra ghi ở KIEM_THU.md |
 | Reset WiFi từ cảm ứng | Giữ đúng +/− 5 giây, giữ cấu hình đèn và tên | Có từ bản 1.1.0; chưa có kết quả riêng từng ca qua vỏ |
-| OTA | File ứng dụng C3, phân vùng còn lại, giữ NVS, reboot sau thành công | Kiểm tra nâng cấp 1.2.0 → 1.2.1 giữ cấu hình |
-| Bàn giao Windows | Sketch, .bin OTA 1.2.1, hướng dẫn và checklist | Thông tin gói/build ghi ở BUILD_INFO.md |
-| Nạp và đo trên thiết bị | LED, TTP223 qua vỏ, độ sáng, nguồn, nhiệt, quét/WiFi/mDNS, AP và OTA | Người dùng đã thử 1.2.0; bản 1.2.1 cần thử lại trên bo/vỏ đó |
+| Đồng hồ/lịch tuần | SNTP, UTC+7, tám dòng ON/OFF, live favorite, không chạy bù | Bản 1.3.0 bổ sung; kết quả host ghi ở KIEM_THU.md, mạng/bo thật chờ thử |
+| Mặt trời | Tọa độ TP.HCM, bình minh ramp và dusk độc lập, offset/ngày/preset ấm | Bản 1.3.0 bổ sung; thời điểm và ramp trên bo chờ thử |
+| Lưu kế hoạch | Namespace deco-plan, giữ draft và kế hoạch qua reset/OTA | Bản 1.3.0 bổ sung; kiểm tra riêng ánh sáng/NVS và kế hoạch |
+| OTA | File ứng dụng C3, phân vùng còn lại, giữ NVS, reboot sau thành công | Nâng cấp 1.2.x → 1.3.0 giữ cấu hình và kế hoạch đã lưu |
+| Bàn giao Windows | Sketch, .bin OTA 1.3.0, hướng dẫn và checklist | Thông tin gói/build ghi ở BUILD_INFO.md |
+| Nạp và đo trên thiết bị | Ánh sáng/cảm ứng/nguồn, WiFi/mDNS, SNTP/lịch/mặt trời và OTA | Người dùng đã thử 1.2.0; tính năng 1.3.0 cần thử trên bo thật |
 
 ## Điểm cần hiệu chỉnh sau nạp
 
@@ -50,12 +63,15 @@ Chế độ ngủ nhớ riêng mức đã chỉnh, ban đầu 5%. Các mặc đ�
 - Reset đúng +/− 5 giây qua vỏ, không nhận nhầm nút và giữ nguyên cấu hình/tên sau reset.
 - Tốc độ, màu và độ mượt qua vỏ, ưu tiên mã 2/4/8/9/10/11/13 ở sáng 5/50/100 và tốc độ 1/50/100; giữ pha khi đổi tốc độ.
 - Độ tương phản Lấp lánh trên vỏ dày với màu RGB đang chọn và nền gần đen.
-- Cấu hình/mục yêu thích/bật tắt trước khi OTA 1.2.0 → 1.2.1 và sau reboot; WiFi/tên giữ nguyên.
+- Cấu hình/mục yêu thích/bật tắt trước khi OTA 1.2.x → 1.3.0 và sau reboot; WiFi/tên giữ nguyên.
+- SNTP qua mạng nhà có Internet, lịch một phút tương lai và giữ giờ sau mất WiFi; no catch-up sau reset/sửa kế hoạch/OTA.
+- Các ưu tiên trùng lịch, mục yêu thích đổi nội dung/trống/hỏng, dừng ramp bằng tay và hủy countdown khi sự kiện tự động chạy.
+- Bình minh thử thời lượng 1 phút bằng offset hợp lệ vào thời điểm thật gần giờ mặt trời mọc, không giả giờ hiện tại.
 
 Cấu hình SSID/mật khẩu trực tiếp tại thiết bị. Toàn bộ dự án và gói tải được đưa lên repo GitHub NguyenPhat-NT/den_trang_tri theo yêu cầu của chủ dự án. Web điều khiển nằm trên ESP; không xuất bản website điều khiển ra ngoài. Chưa nạp thiết bị từ cloud.
 
 ## Kiến trúc
 
-Core.h chứa điều khiển, nhận cảm ứng, timer và renderer; không phụ thuộc Arduino. Storage.h encode dữ liệu rõ bằng JSON và envelope nhị phân; Preferences chỉ là lớp I/O. DenDeco.ino dùng WebServer tích hợp, WiFi và Update, mọi lệnh vào cùng Controller. WebUI.h chứa HTML/CSS/JS đầy đủ, không dùng CDN.
+Core.h chứa điều khiển, nhận cảm ứng, timer và renderer; không phụ thuộc Arduino. Storage.h encode dữ liệu rõ bằng JSON và envelope nhị phân; Preferences chỉ là lớp I/O. Lịch/mặt trời dùng thời gian thực UTC rồi đổi cố định sang UTC+7, tách cấu hình kế hoạch khỏi dữ liệu ánh sáng. DenDeco.ino nối đồng hồ SNTP, lịch, Controller, WebServer, WiFi và Update. WebUI.h chứa HTML/CSS/JS đầy đủ, không dùng CDN; polling cập nhật trạng thái mà không ghi đè các ô kế hoạch đang sửa.
 
 Không có tác vụ chờ kết nối WiFi hoặc đợi quét WiFi trong vòng lặp. Web yêu cầu quét rồi đọc kết quả/trạng thái bằng API; phần STA/AP theo dõi kết nối và IP được cấp. WebServer xử lý request tuần tự; HTTP chậm hoặc upload OTA có thể tạm chiếm vòng lặp. Mục tiêu phản hồi và đồng bộ trong tài liệu cần đo trên mạng/bo thật; kiểm tra trình duyệt mô phỏng không chứng minh các mốc 100/500 ms của thiết bị.

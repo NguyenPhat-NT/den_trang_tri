@@ -55,8 +55,10 @@ class Storage {
  }
  void changed(const Settings& s,uint32_t now){dirty=encodeSettings(s)!=saved;if(dirty){lastChange=now;tried=false;} }
  bool saveNow(const Settings& s){
-  if(!dirty)return !blocked;
   if(!opened||blocked){error=blocked?"Không thể ghi schema chưa hỗ trợ":"NVS chưa sẵn sàng";return false;}
+  // An explicit maintenance save also establishes a verified baseline on
+  // first boot. A matching in-memory default is not yet a persisted record.
+  if(!dirty&&hasSaved)return true;
   String text=encodeSettings(s);int next=slot==0?1:0;uint32_t gen=(generation+1)&0xffffffu;
   if(!writeBlob(next==0?"slot-a":"slot-b",text,gen)){error="Ghi hoặc kiểm tra NVS thất bại";return false;}
   saved=text;generation=gen;slot=next;dirty=false;hasSaved=true;error="";writes++;return true;

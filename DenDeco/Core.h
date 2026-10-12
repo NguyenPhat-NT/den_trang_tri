@@ -246,7 +246,7 @@ class Renderer {
  void retarget(const Settings& s,uint32_t now){
   for(uint16_t i=0;i<Config::LED_COUNT;i++)from[i]=current[i];
   for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundFrom[h]=roundCurrent[h];
-  pFrom=pCurrent;pTarget=s.light.brightness;gateFrom=gateCurrent*lastTimerEnvelope;gateTarget=s.power?1:0;
+  pFrom=pCurrent;pTarget=!s.power&&gateCurrent>0?pCurrent:s.light.brightness;gateFrom=gateCurrent*lastTimerEnvelope;gateTarget=s.power?1:0;
   if(target.mode!=s.light.mode){phaseAt=now;phaseOffset=0;twinkleStepOffset=0;}
   else if(target.speed!=s.light.speed&&cyclePeriod(target.mode,target.speed)>0){
    uint8_t step=target.mode==Twinkle?twinkleStep(target,now):0;
@@ -255,15 +255,19 @@ class Renderer {
   target=s.light;transitionAt=now;
  }
  void feedback(uint32_t now){feedbackAt=now;feedbackActive=true;}
- void frame(const Settings& s,const Timer& timer,uint32_t now,uint8_t out[Config::LED_COUNT][3]){
+ float brightness()const{return pCurrent;}
+ void frame(const Settings& s,const Timer& timer,uint32_t now,uint8_t out[Config::LED_COUNT][3],float brightnessOverride=-1){
   float k=clamp01(float(uint32_t(now-transitionAt))/Config::FADE_MS);
-  pCurrent=pFrom+(pTarget-pFrom)*k;gateCurrent=gateFrom+(gateTarget-gateFrom)*k;
+  pCurrent=brightnessOverride>=0?fminf(brightnessOverride,100.0f):pFrom+(pTarget-pFrom)*k;gateCurrent=gateFrom+(gateTarget-gateFrom)*k;
   float pulse=1;if(feedbackActive){float f=float(uint32_t(now-feedbackAt))/400.0f;if(f>=1)feedbackActive=false;else pulse=1-.15f*sinf(f*3.14159265f);}
   lastTimerEnvelope=timer.envelope(now);
   int maxCode=int(floorf(s.cap/100.0f*255.0f));
-  float peakCodes=fminf(scale(pCurrent,s.cap)*255,maxCode);
+  // Solar ramps can begin at zero. Keep the stored 1..100 slider curve,
+  // but connect its minimum smoothly to darkness below 1 percent.
+  float output=pCurrent<1?Config::MIN_OUTPUT*clamp01(pCurrent):scale(pCurrent,s.cap);
+  float peakCodes=fminf(output*255,maxCode);
   float gainCodes=peakCodes*gateCurrent*lastTimerEnvelope*pulse;
-  for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundCurrent[h]=colorMix(roundFrom[h],roundingThreshold(target.mode,h),k);
+  for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundCurrent[h]=colorMix(roundFrom[h],roundingThreshold(brightnessOverride>=0?uint8_t(SlowColor):target.mode,h),k);
   for(uint16_t i=0;i<Config::LED_COUNT;i++){
    Color e=effect(target,i,now);current[i]={from[i].r+(e.r-from[i].r)*k,from[i].g+(e.g-from[i].g)*k,from[i].b+(e.b-from[i].b)*k};
    float c[3]={current[i].r,current[i].g,current[i].b};

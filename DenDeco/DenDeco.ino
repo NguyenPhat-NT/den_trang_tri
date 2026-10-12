@@ -1,4 +1,4 @@
-/* Den Deco 1.2.1 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
+/* Den Deco 1.3.0 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
  * Arduino ESP32 3.3.1, Adafruit NeoPixel 1.15.5, ArduinoJson 7.4.3.
  * Select an OTA partition scheme; initial installation uses USB.
  */
@@ -12,22 +12,37 @@
 #include <atomic>
 #include <mdns.h>
 #include <esp_wifi.h>
+#include <esp_sntp.h>
+#include <time.h>
 #include "Config.h"
 #include "Core.h"
 #include "Storage.h"
+#include "ScheduleStorage.h"
+#include "Automation.h"
 #include "WebUI.h"
 using namespace Deco;
-const char* VERSION="1.2.1";
+const char* VERSION="1.3.0";
 Controller lamp;
 Renderer renderer;
 Touch touch;
 Storage storage;
 NetworkStorage netStore;
 NetworkConfig network;
+ScheduleConfig schedules;
+SolarConfig solar;
+ScheduleStorage planStore;
+Scheduler scheduler;
+SolarScheduler solarScheduler;
+BrightnessRamp dawnRamp;
+ClockContinuity clockContinuity;
+bool clockReady=false,ntpStarted=false;
+std::atomic<bool> sntpPending{false};
+int64_t lastSyncUtc=0;
+String automationError;
 WebServer server(80);
 Adafruit_NeoPixel leds(Config::LED_COUNT,Config::LED_PIN,NEO_GRB+NEO_KHZ800);
 String suffix,apName,hostname,sessionToken;
-bool apRunning=false,mdnsRunning=false,networkPending=false,otaBusy=false,otaSuccess=false;
+bool apRunning=false,mdnsRunning=false,networkPending=false,otaBusy=false,otaSuccess=false,otaPausedAutomations=false;
 ConnectionPolicy connection;
 std::atomic<int> disconnectReason{0};
 uint32_t networkApplyAt=0,restartAt=0,lastFrame=0;
@@ -44,6 +59,14 @@ String otaError;
 size_t otaExpected=0,otaReceived=0,otaHeaderCount=0;
 uint8_t otaHeader[sizeof(esp_image_header_t)+8+4];
 uint32_t otaLastTraffic=0;
+
+int64_t utcNow(){return int64_t(time(nullptr));}
+bool readyAt(int64_t utc){ScheduleWallTime wall;return clockReady&&localScheduleTime(utc,wall);}
+String clockText(int64_t utc,const char* format){
+ time_t epoch=time_t(utc);struct tm local;if(!localtime_r(&epoch,&local))return "";
+ char text[32];if(!strftime(text,sizeof(text),format,&local))return "";return String(text);
+}
+void rebaselineAutomations(){int64_t utc=utcNow();bool ready=readyAt(utc);scheduler.rebaseline(utc,ready);solarScheduler.rebaseline(utc,ready);}
 
 bool homeOnline(){return network.ssid.length()>0&&!wifiBeginPending&&WiFi.status()==WL_CONNECTED&&uint32_t(WiFi.localIP())!=0;}
 void stopMDNS(){MDNS.end();mdnsRunning=false;hostname=network.hostname;hostnameCollision=0;mdnsCheckedAt=millis()-2000;}
@@ -143,13 +166,80 @@ void networkTick(uint32_t now){
 }
 
 String randomText(size_t length){const char* alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";String s;for(size_t i=0;i<length;i++)s+=alphabet[esp_random()%strlen(alphabet)];return s;}
-void renderFrame(uint32_t now){uint8_t frame[Config::LED_COUNT][3];renderer.frame(lamp.settings,lamp.timer,now,frame);for(uint16_t i=0;i<Config::LED_COUNT;i++)leds.setPixelColor(i,frame[i][0],frame[i][1],frame[i][2]);leds.show();}
+void renderFrame(uint32_t now){uint8_t frame[Config::LED_COUNT][3];renderer.frame(lamp.settings,lamp.timer,now,frame,dawnRamp.active?dawnRamp.value(now):-1);for(uint16_t i=0;i<Config::LED_COUNT;i++)leds.setPixelColor(i,frame[i][0],frame[i][1],frame[i][2]);leds.show();}
+bool freezeDawn(uint32_t now){
+ if(!dawnRamp.active)return false;
+ uint8_t brightness=clampBrightness(int(dawnRamp.value(now)+.5f));dawnRamp.cancel();
+ lamp.apply({Action::Brightness,brightness},now);storage.changed(lamp.settings,now);return true;
+}
+void stopDawn(uint32_t now){if(!dawnRamp.active)return;renderFrame(now);freezeDawn(now);renderer.retarget(lamp.settings,now);}
+void clockTick(uint32_t now){
+ if(!ntpStarted&&homeOnline()){
+  esp_sntp_set_time_sync_notification_cb([](struct timeval*){sntpPending.store(true);});
+  esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+  configTzTime("ICT-7","pool.ntp.org","time.google.com","time.cloudflare.com");ntpStarted=true;
+ }
+ int64_t utc=utcNow();ScheduleWallTime wall;
+ if(sntpPending.exchange(false)&&localScheduleTime(utc,wall)){clockReady=true;lastSyncUtc=utc;}
+ if(clockReady&&!localScheduleTime(utc,wall))clockReady=false;
+ if(clockContinuity.observe(utc,clockReady,now)){
+  stopDawn(now);rebaselineAutomations();automationError="Giờ vừa được điều chỉnh; bỏ qua phút hiện tại.";
+ }
+}
+void runAutomation(const AutomationChoice& choice,int64_t utc,uint32_t now){
+ if(choice.kind==AutomationKind::None)return;
+ Light light;
+ if(choice.kind!=AutomationKind::WeeklyOff&&!automationLight(lamp.settings,choice,light)){
+  automationError="Bỏ qua lịch: mục yêu thích chưa được lưu hoặc không còn hợp lệ.";return;
+ }
+ renderFrame(now);float initial=lamp.settings.power?renderer.brightness():0;
+ // Finish a prior ramp at its current displayed level before OFF/new target.
+ bool previousRamp=freezeDawn(now);Settings before=lamp.settings;
+ if(choice.kind==AutomationKind::Dawn){
+  // Verify the pre-ramp baseline before changing power or the target. If
+  // flash is unavailable, skip this occurrence instead of risking a cold
+  // restart at an unrelated, previously saved full-brightness state.
+  storage.changed(before,now);
+  if(!storage.saveNow(before)){
+   if(previousRamp)renderer.retarget(lamp.settings,now);
+   automationError="Bỏ qua Bình minh: chưa lưu được trạng thái trước khi tăng sáng.";return;
+  }
+ }
+ lamp.apply({Action::TimerCancel},now);
+ if(choice.kind==AutomationKind::WeeklyOff)lamp.apply({Action::Power,0},now);
+ else{
+  lamp.settings.light=light;if(light.mode==Sleep)lamp.settings.sleepBrightness=light.brightness;
+  lamp.settings.power=true;
+  if(!(before==lamp.settings))++lamp.revision;
+  if(choice.kind==AutomationKind::Dawn){
+   // Persist the pre-ramp state, then keep interpolation in RAM. A power
+   // interruption cannot restore a half-finished ramp at full brightness.
+   int64_t left=choice.eventUtc+int64_t(choice.solar.minutes)*60-utc;
+   dawnRamp.begin(initial,light.brightness,now,uint32_t(left>0?left*1000:0));
+  }
+ }
+ renderer.retarget(lamp.settings,now);
+ if(!dawnRamp.active)storage.changed(lamp.settings,now);
+ automationError="";
+}
+void automationTick(uint32_t now){
+ if(dawnRamp.active&&!dawnRamp.remaining(now)){
+  renderFrame(now);dawnRamp.cancel();renderer.retarget(lamp.settings,now);storage.changed(lamp.settings,now);
+ }
+ int64_t utc=utcNow();bool ready=readyAt(utc);AutomationChoice choice;
+ solarScheduler.tick(utc,ready,solar,[&](bool dawn,const SolarEntry& entry,int64_t event){choice.sun(dawn,entry,event);});
+ scheduler.tick(utc,ready,schedules,[&](uint8_t index,const ScheduleEntry& entry){choice.weekly(index,entry);});
+ runAutomation(choice,utc,now);
+}
 Result execute(const Command& c,uint32_t now){
+ Controller check=lamp;Result allowed=check.apply(c,now);if(!allowed.accepted)return allowed;
  renderFrame(now); // Sample an in-flight transition before retargeting.
  Settings before=lamp.settings;bool timerBefore=lamp.timer.active;uint32_t startBefore=lamp.timer.start,durationBefore=lamp.timer.duration;
+ bool rampBefore=freezeDawn(now);
  Result r=lamp.apply(c,now);
+ r.changed=!(before==lamp.settings);
  if(r.changed)storage.changed(lamp.settings,now);
- if(!(before.light==lamp.settings.light)||before.power!=lamp.settings.power||before.cap!=lamp.settings.cap||timerBefore!=lamp.timer.active||startBefore!=lamp.timer.start||durationBefore!=lamp.timer.duration)renderer.retarget(lamp.settings,now);
+ if(rampBefore||!(before.light==lamp.settings.light)||before.power!=lamp.settings.power||before.cap!=lamp.settings.cap||timerBefore!=lamp.timer.active||startBefore!=lamp.timer.start||durationBefore!=lamp.timer.duration)renderer.retarget(lamp.settings,now);
  if(r.feedback)renderer.feedback(now);
  return r;
 }
@@ -159,11 +249,12 @@ void onTouch(TouchEvent e){
  if(e==TouchEvent::PowerShort){execute({Action::Power,!lamp.settings.power},now);return;}
  if(e==TouchEvent::SleepHold){execute({Action::SleepNow},now);return;}
  if(!lamp.settings.power)return;
+ int currentBrightness=dawnRamp.active?int(dawnRamp.value(now)+.5f):lamp.settings.light.brightness;
  switch(e){
-  case TouchEvent::MinusShort:execute({Action::Brightness,clampBrightness(lamp.settings.light.brightness-5)},now);break;
-  case TouchEvent::PlusShort:execute({Action::Brightness,clampBrightness(lamp.settings.light.brightness+5)},now);break;
-  case TouchEvent::MinusStep:execute({Action::Brightness,clampBrightness(lamp.settings.light.brightness-1)},now);break;
-  case TouchEvent::PlusStep:execute({Action::Brightness,clampBrightness(lamp.settings.light.brightness+1)},now);break;
+  case TouchEvent::MinusShort:execute({Action::Brightness,clampBrightness(currentBrightness-5)},now);break;
+  case TouchEvent::PlusShort:execute({Action::Brightness,clampBrightness(currentBrightness+5)},now);break;
+  case TouchEvent::MinusStep:execute({Action::Brightness,clampBrightness(currentBrightness-1)},now);break;
+  case TouchEvent::PlusStep:execute({Action::Brightness,clampBrightness(currentBrightness+1)},now);break;
   case TouchEvent::ModeShort:execute({Action::Mode,(lamp.settings.light.mode+1)%ModeCount},now);break;
   case TouchEvent::TimerHold:execute({lamp.timer.active?Action::TimerCancel:Action::TimerStart,30},now);break;
   default:break;
@@ -193,9 +284,38 @@ void stateDocument(JsonDocument& d){
  d["ssid"]=network.ssid;d["wifiOpen"]=network.ssid.length()>0&&network.password.length()==0;d["wifiConnected"]=homeOnline();d["ip"]=homeOnline()?WiFi.localIP().toString():String("");d["apActive"]=apRunning;d["apSSID"]=apName;d["hostname"]=hostname;
  d["requestedHostname"]=network.hostname;d["localUrl"]="http://"+hostname+".local";d["mdnsReady"]=mdnsRunning;
  d["networkStatus"]=networkStatus();d["networkMessage"]=networkMessage();d["disconnectReason"]=disconnectReason.load();
+ int64_t utc=utcNow();bool ready=readyAt(utc);
+ JsonObject clock=d["clock"].to<JsonObject>();clock["ready"]=ready;clock["online"]=homeOnline();clock["syncing"]=ntpStarted&&!ready;clock["utc"]=ready?utc:0;clock["lastSyncUtc"]=lastSyncUtc;clock["zone"]="UTC+7";
+ clock["localTime"]=ready?clockText(utc,"%H:%M:%S"):String("");clock["localDate"]=ready?clockText(utc,"%d/%m/%Y"):String("");
+ schedulesToJson(d["schedules"].to<JsonObject>(),schedules);JsonObject sun=d["sun"].to<JsonObject>();solarToJson(sun,solar);
+ if(ready){const SolarTimes& times=solarScheduler.today(utc,solar);sun["sunrise"]=times.sunriseValid?clockText(times.sunriseUtc,"%H:%M"):String("");sun["sunset"]=times.sunsetValid?clockText(times.sunsetUtc,"%H:%M"):String("");}
+ else{sun["sunrise"]="";sun["sunset"]="";}
+ JsonObject automation=d["automation"].to<JsonObject>();automation["active"]=dawnRamp.active;automation["kind"]=dawnRamp.active?"dawn":"";automation["brightness"]=dawnRamp.active?dawnRamp.value(now):float(lamp.settings.light.brightness);automation["target"]=dawnRamp.active?dawnRamp.target:float(lamp.settings.light.brightness);automation["remainingMs"]=dawnRamp.remaining(now);automation["error"]=automationError;
+ d["scheduleSaveError"]=planStore.error;d["scheduleSaved"]=planStore.hasSaved;d["scheduleSaveBlocked"]=planStore.blocked;
  const esp_partition_t* part=esp_ota_get_next_update_partition(nullptr);d["otaMaxBytes"]=part?part->size:0;d["uptimeMs"]=now;
 }
 void getState(){JsonDocument d;stateDocument(d);sendJson(d);}
+bool savedFavorite(int favorite){return favorite>=0&&favorite<3&&lamp.settings.favorites[favorite].valid&&validLight(lamp.settings.favorites[favorite].light);}
+void handleSchedules(){
+ JsonDocument d;if(!parseBody(d))return;ScheduleConfig next;
+ if(!schedulesFromJson(d.as<JsonObjectConst>(),next)){fail(400,"Lịch cần đúng 8 mục, giờ 00:00–23:59 và ngày trong tuần hợp lệ");return;}
+ if(next.enabled)for(const auto& entry:next.entries)if(entry.enabled&&entry.power&&!savedFavorite(entry.favorite)){fail(400,"Lưu mục yêu thích trước khi bật lịch dùng mục đó");return;}
+ // Favorites may still be within the normal 10-second debounce. Commit
+ // them before a referencing plan so reboot cannot leave dangling presets.
+ stopDawn(millis());
+ if(!storage.saveNow(lamp.settings)){fail(500,"Chưa lưu được cấu hình đèn; chưa thay đổi lịch");return;}
+ if(!planStore.save(next,solar)){fail(500,planStore.error.length()?planStore.error:String("Không lưu được lịch"));return;}
+ schedules=next;int64_t utc=utcNow();scheduler.configure(schedules,utc,readyAt(utc));++lamp.revision;automationError="";getState();
+}
+void handleSun(){
+ JsonDocument d;if(!parseBody(d))return;SolarConfig next;
+ if(!solarFromJson(d.as<JsonObjectConst>(),next)){fail(400,"Vị trí hoặc cấu hình mặt trời ngoài phạm vi");return;}
+ for(const SolarEntry* entry:{&next.dawn,&next.dusk})if(entry->enabled&&entry->favorite>=0&&!savedFavorite(entry->favorite)){fail(400,"Lưu mục yêu thích trước khi bật tính năng dùng mục đó");return;}
+ stopDawn(millis());
+ if(!storage.saveNow(lamp.settings)){fail(500,"Chưa lưu được cấu hình đèn; chưa thay đổi tính năng mặt trời");return;}
+ if(!planStore.save(schedules,next)){fail(500,planStore.error.length()?planStore.error:String("Không lưu được tính năng mặt trời"));return;}
+ solar=next;int64_t utc=utcNow();solarScheduler.configure(solar,utc,readyAt(utc));++lamp.revision;automationError="";getState();
+}
 void handleCommand(){
  JsonDocument d;if(!parseBody(d))return;String type=d["type"].as<String>();Command c(Action::Power);int n=0;bool valid=true;
  if(type=="power"){valid=d["value"].is<bool>();c=Command(Action::Power,d["value"].as<bool>());}
@@ -259,12 +379,12 @@ void startScan(){
  scanStatus=scanRunning?"scanning":"error";scanMessage=scanRunning?"Đang quét WiFi 2,4 GHz…":"Chưa bắt đầu được quét; vui lòng thử lại.";
  getScan();
 }
-void abortOTA(const String& message){otaError=message;if(Update.isRunning())Update.abort();otaBusy=false;}
+void abortOTA(const String& message){otaError=message;if(Update.isRunning())Update.abort();otaBusy=false;if(otaPausedAutomations)rebaselineAutomations();}
 bool validateOTAHeader(){esp_image_header_t h;memcpy(&h,otaHeader,sizeof(h));return h.magic==ESP_IMAGE_HEADER_MAGIC&&h.chip_id==ESP_CHIP_ID_ESP32C3&&get32(otaHeader+sizeof(h)+8)==ESP_APP_DESC_MAGIC_WORD;}
 void uploadOTA(){
  HTTPUpload& u=server.upload();otaLastTraffic=millis();
  if(u.status==UPLOAD_FILE_START){
-  otaSuccess=false;otaError="";otaExpected=otaReceived=otaHeaderCount=0;
+  otaSuccess=false;otaPausedAutomations=false;otaError="";otaExpected=otaReceived=otaHeaderCount=0;
   // Validate without sending a second response from the multipart callback.
   String origin=server.header("Origin");if((origin.length()&&origin!="http://"+server.hostHeader())||server.header("Sec-Fetch-Site")=="cross-site"||server.header("X-Deco-Token")!=sessionToken){otaError="Phiên OTA không hợp lệ";return;}
   if(otaBusy||restartPending||networkPending||scanRunning||connection.phase==ConnectionPolicy::Connecting){otaError="Đèn đang chuyển mạng hoặc quét WiFi; chờ ổn định rồi OTA";return;}
@@ -273,8 +393,9 @@ void uploadOTA(){
   otaExpected=sizeText.toInt();const esp_partition_t* part=esp_ota_get_next_update_partition(nullptr);
   if(!part||otaExpected<sizeof(otaHeader)||otaExpected>part->size){otaError="File quá lớn hoặc bảng phân vùng không hỗ trợ OTA";return;}
   // Explicit maintenance save before update: successful OTA reboot preserves latest configuration.
+  stopDawn(millis());
   if(!storage.saveNow(lamp.settings)){otaError="Chưa lưu được trạng thái; OTA chưa bắt đầu";return;}
-  otaBusy=true;renderFrame(millis());
+  otaBusy=true;otaPausedAutomations=true;renderFrame(millis());
  }else if(u.status==UPLOAD_FILE_WRITE){
   if(!otaBusy||otaError.length())return;
   if(otaReceived+u.currentSize>otaExpected){abortOTA("File dài hơn kích thước đã khai báo");return;}
@@ -297,11 +418,16 @@ void uploadOTA(){
   otaBusy=false;otaSuccess=true;restartPending=true;restartAt=millis();
  }else if(u.status==UPLOAD_FILE_ABORTED){abortOTA("Đã ngắt tải lên; firmware hiện tại vẫn được giữ");}
 }
-void finishOTA(){if(otaSuccess){JsonDocument d;d["ok"]=true;d["message"]="Cập nhật thành công; đèn đang khởi động lại";sendJson(d);}else fail(otaError=="Phiên OTA không hợp lệ"?403:400,otaError.length()?otaError:String("Chưa nhận được firmware"));}
+void finishOTA(){
+ if(otaSuccess){JsonDocument d;d["ok"]=true;d["message"]="Cập nhật thành công; đèn đang khởi động lại";sendJson(d);}
+ else{if(otaPausedAutomations)rebaselineAutomations();fail(otaError=="Phiên OTA không hợp lệ"?403:400,otaError.length()?otaError:String("Chưa nhận được firmware"));}
+ otaPausedAutomations=false;
+}
 void setup(){
  Serial.begin(115200); // Do not wait for a serial monitor before restoring the lamp.
  pinMode(Config::POWER_PIN,INPUT_PULLDOWN);pinMode(Config::MINUS_PIN,INPUT_PULLDOWN);pinMode(Config::PLUS_PIN,INPUT_PULLDOWN);pinMode(Config::MODE_PIN,INPUT_PULLDOWN);
  leds.begin();leds.clear();leds.show();storage.begin(lamp.settings);renderer.begin(lamp.settings,millis());touch.begin(millis());
+ planStore.begin(schedules,solar);scheduler.begin(schedules);solarScheduler.begin(solar);
  uint64_t mac=ESP.getEfuseMac();char id[7];snprintf(id,sizeof(id),"%06X",uint32_t(mac>>24)&0xffffffu);suffix=id;apName="DenDeco-"+suffix;sessionToken=randomText(32);
  bool networkOK=netStore.begin(network);if(!networkOK)Serial.println("Network NVS unavailable or invalid; using provisioning defaults");
  hostname=network.hostname;
@@ -311,6 +437,7 @@ void setup(){
  const char* headers[]={"Origin","Content-Type","X-Deco-Token","Sec-Fetch-Site","X-Firmware-Size"};server.collectHeaders(headers,5);
  server.on("/",HTTP_GET,[]{noCache();server.sendHeader("Content-Security-Policy","default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'");server.send_P(200,"text/html; charset=utf-8",WEB_UI);});
  server.on("/api/state",HTTP_GET,getState);server.on("/api/command",HTTP_POST,handleCommand);server.on("/api/network",HTTP_POST,handleNetwork);
+ server.on("/api/schedules",HTTP_POST,handleSchedules);server.on("/api/sun",HTTP_POST,handleSun);
  server.on("/api/scan",HTTP_GET,getScan);server.on("/api/scan",HTTP_POST,startScan);
  server.on("/api/ota",HTTP_POST,finishOTA,uploadOTA);
  server.onNotFound([]{fail(404,"Không tìm thấy đường dẫn");});server.begin();Serial.printf("Den Deco %s ready; %u LEDs\n",VERSION,Config::LED_COUNT);
@@ -320,10 +447,12 @@ void loop(){
  if(otaBusy&&uint32_t(now-otaLastTraffic)>30000)abortOTA("Đã hết thời gian tải lên");
  if(restartPending&&uint32_t(now-restartAt)>=1800){ESP.restart();return;}
  if(!otaBusy&&!restartPending){
+  clockTick(now);
   bool raw[]={digitalRead(Config::POWER_PIN)==HIGH,digitalRead(Config::MINUS_PIN)==HIGH,digitalRead(Config::PLUS_PIN)==HIGH,digitalRead(Config::MODE_PIN)==HIGH};touch.scan(raw,now,onTouch);
   now=millis(); // Touch callbacks may start a timer/reset at a newer timestamp.
   Result r=lamp.tick(now);if(r.changed){storage.changed(lamp.settings,now);renderer.retarget(lamp.settings,now);}
-  storage.tick(lamp.settings,now);
+  automationTick(now);
+  if(!dawnRamp.active)storage.tick(lamp.settings,now);
   if(uint32_t(now-lastFrame)>=Config::FRAME_MS){lastFrame=now;renderFrame(now);}
   networkTick(now);
  }

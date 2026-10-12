@@ -1,8 +1,8 @@
-# Kiểm thử và nghiệm thu Đèn Deco 1.2.1
+# Kiểm thử và nghiệm thu Đèn Deco 1.3.0
 
 ## Đã thực hiện trên phần mềm
 
-Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0; phần 1.2.0 giữ kết quả lịch sử riêng. Thông tin build và kết quả chạy mới cho 1.2.1 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã thử 1.2.0 trên đèn thật, báo bước chuyển màu còn lớn và Lấp lánh khó thấy do mật độ LED lớn. **Bản 1.2.1 cần thử lại trên bo/vỏ đó**; build và web mock không xác nhận độ mượt cảm nhận.
+Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0; phần 1.2.0/1.2.1 giữ kết quả lịch sử riêng. Thông tin build và kết quả chạy mới cho 1.3.0 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã thử 1.2.0 trên đèn thật, có phản hồi chuyển màu/Lấp lánh. **SNTP, lịch tuần và tự động mặt trời của bản 1.3.0 cần thử trên bo thật**; host/web mock không xác nhận Internet SNTP, đồng hồ ESP hoặc ramp thực tế.
 
 - Sketch chẩn đoán LED_Check cũng đã build thành công cho cùng ESP32-C3/core.
 - Build thực tế ESP32-C3: PlatformIO espressif32 6.12.0, Arduino ESP32 2.0.17, NeoPixel 1.12.5, ArduinoJson 7.4.2; USB CDC bật và phân vùng OTA 4 MB.
@@ -66,6 +66,39 @@ Các kiểm tra phần mềm bên dưới đã đạt cho bản 1.2.1; cảm nh�
 | F03 | Lấp lánh qua vỏ dày với vài màu RGB, sáng/tốc độ khác nhau | Cụm xuất hiện/tắt dần thấy được trên nền gần đen, giữ màu đã chọn; ghi độ tương phản so với 1.2.0 | Chưa thử 1.2.1 |
 | F04 | OTA 1.2.0 → 1.2.1, reboot và áp dụng mục yêu thích | Giữ trạng thái bật/tắt, 14 mã chế độ, RGB, sáng/tốc độ, mục yêu thích, WiFi/tên/hostname; thử bật/tắt bình thường | Chưa thử 1.2.1 |
 
+## Kiểm tra bổ sung bản 1.3.0
+
+Các bộ kiểm tra C++11 với ASan/UBSan, cảnh báo nghiêm ngặt và web Playwright/Chromium đã chạy **PASS** cho bản 1.3.0. Arduino 3.3.1 và PlatformIO/core 2.0.17 đều build **SUCCESS**; chi tiết trong `BUILD_INFO.md`. Nội dung đã kiểm tra trên host:
+
+- PASS Lịch tuần: tám dòng, ngày/giờ UTC+7, tham chiếu mục yêu thích lúc chạy; chọn ON/OFF trùng phút đúng ưu tiên và chỉ áp dụng một kết quả. OFF tuần thắng, ON tuần cuối thắng mặt trời, dusk thắng dawn khi chỉ có hai mặt trời. Mục trống/hỏng bỏ qua an toàn.
+- PASS Mô hình đồng hồ: trạng thái chưa đồng bộ, phút đầu sau sync không chạy, holdover sau mất WiFi, tràn thời gian; không chạy bù/replay sau boot/sửa kế hoạch/nhảy giờ/OTA. Callback SNTP định kỳ bình thường không phát lại sự kiện cũ.
+- PASS Mặt trời: TP.HCM 10.776/106.7, giới hạn tọa độ/offset/ngày, sự kiện mọc/lặn có hoặc không hợp lệ; dawn bắt đầu tại giờ mọc cộng offset, ramp 0→preset/mục yêu thích theo 1–120 phút; dusk độc lập. Preset ấm RGB (255,160,72), 35% và trần đầu ra áp dụng.
+- PASS Điều khiển/renderer: thao tác ánh sáng tay dừng ramp, lịch tương lai giữ; sự kiện tự động áp dụng hủy countdown; không đổi 14 mode/tint/hiệu ứng Hoàng hôn mã 11.
+- PASS Lưu kế hoạch NVS riêng: CRC/validation theo bản triển khai, giữ qua reset/OTA, không đổi schema ánh sáng 2 hoặc cấu hình mạng. Web giữ draft khi polling/saving, hiển thị giờ/lịch/mặt trời; kiểm tra bàn phím và layout điện thoại.
+
+PASS bổ sung baseline lưu bảo trì khi lần đầu/mặc định và lỗi mở/ghi/readback; tắt trong đoạn đầu Bình minh không tăng sáng thoáng qua. Rà soát luồng OTA thất bại lấy lại mốc phút tại điểm tiếp tục vòng lặp.
+
+Các thử host chỉ xác nhận thuật toán/mô hình và tương tác web. Cần chạy riêng trên ESP/router để xác nhận đường SNTP thực, thời gian tiếp tục khi mất WiFi và sự kiện/ramp phát ánh sáng.
+
+## Chạy thử bổ sung bản 1.3.0 trên đèn
+
+| Mã | Kiểm tra | Cần đạt / cần ghi nhận | Kết quả thực tế |
+| --- | --- | --- | --- |
+| A01 | Nạp/boot lần đầu chỉ có AP, chưa có Internet | Web/cảm ứng hoạt động; giờ/lịch chờ đồng bộ, không tự bật theo giờ chưa xác thực | Chưa thử 1.3.0 |
+| A02 | Nối WiFi nhà có Internet và chờ SNTP | Trang hiển thị ngày/giờ UTC+7 đúng; phút đồng bộ đầu không chạy sự kiện | Chưa thử 1.3.0 |
+| A03 | Lịch ON hôm nay ở phút kế tiếp, OFF một phút sau | Dùng favorite đã lưu, đúng phút/đúng bật tắt; lưu trước phút chạy, không chỉnh giả giờ | Chưa thử 1.3.0 |
+| A04 | Sửa nội dung favorite sau lưu dòng ON; thử favorite trống | ON dùng nội dung mới lúc chạy; mục trống/hỏng bỏ qua an toàn | Chưa thử 1.3.0 |
+| A05 | Sau đồng bộ đặt lịch tương lai, tắt/bật router | Đồng hồ tiếp tục và lịch chạy khi mất WiFi; khôi phục SNTP không replay | Chưa thử 1.3.0 |
+| A06 | Reboot không Internet, sửa lịch trùng phút hiện tại, lỡ giờ trong OTA | Chờ sync sau boot, không chạy bù/phát lại; thử tiếp bằng phút tương lai | Chưa thử 1.3.0 |
+| A07 | TP.HCM, xem giờ mọc/lặn và chỉnh offset/ngày | Giờ tính hợp lý theo ngày, UTC+7; độc lập ngày/offset mỗi tự động, tọa độ lưu đúng | Chưa thử 1.3.0 |
+| A08 | Dawn màu ấm, ramp 1 phút, offset đưa vào phút tương lai hợp lệ | Bắt đầu tại giờ mọc+offset, từ 0 lên RGB 255/160/72 ở mức 35%; ghi độ mượt thực, không giả đồng hồ | Chưa thử 1.3.0 |
+| A09 | Dusk chọn màu ấm rồi favorite tại giờ lặn+offset | Bật đúng preset/mục yêu thích; không tự chọn hiệu ứng Hoàng hôn mã 11 | Chưa thử 1.3.0 |
+| A10 | Thao tác tay khi dawn đang tăng; đặt countdown trước sự kiện tự động | Tay dừng ramp, lịch tương lai vẫn chạy; sự kiện tự động áp dụng hủy countdown | Chưa thử 1.3.0 |
+| A11 | Cùng phút nhiều ON/OFF, tuần+mặt trời, dawn+dusk | OFF thắng; không OFF thì ON tuần cuối thắng; chỉ mặt trời thì dusk thắng; không bật/tắt trung gian | Chưa thử 1.3.0 |
+| A12 | Draft kế hoạch đang sửa khi polling, lưu rồi reset/OTA | Draft không bị ghi đè; kế hoạch đã lưu/tọa độ giữ, ánh sáng/favorites/WiFi/tên cũng giữ | Chưa thử 1.3.0 |
+
+Với A08/A09, chỉ dùng offset ±120 phút khi giờ hiện tại gần sự kiện mặt trời; nếu không, thử vào ngày/giờ thích hợp. Không giả đồng hồ để biến kiểm tra thuật toán thành kết quả phần cứng. Bảo vệ khỏi chạy bù sau clock jump được kiểm tra trên host; kết quả SNTP/ramp thật ghi riêng.
+
 ## Bảng chạy thử trên thiết bị
 
 Ghi Ngày / Kết quả / Ghi chú cho từng dòng. Các ca nền T/N/O giữ lại để bổ sung kết quả cụ thể; trạng thái chưa ghi kết quả không phủ nhận việc người dùng đã lắp và dùng đèn. Mục tiêu về thời gian cần đo trên mạng thực tế.
@@ -116,11 +149,19 @@ c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/core_tes
 ./core-test
 c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/network_test.cpp -o network-test
 ./network-test
-c++ -std=c++11 -Wall -Wextra -fsanitize=address,undefined -Itests/stubs -I.pio/libdeps/esp32c3/ArduinoJson/src tests/storage_test.cpp -o storage-test
+c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -I.pio/libdeps/esp32c3/ArduinoJson/src tests/storage_test.cpp -o storage-test
 ./storage-test
+c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/schedule_test.cpp -o schedule-test
+./schedule-test
+c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/solar_test.cpp -o solar-test
+./solar-test
+c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/automation_test.cpp -o automation-test
+./automation-test
+c++ -std=c++11 -Wall -Wextra -Werror -fsanitize=address,undefined -Itests/stubs -I.pio/libdeps/esp32c3/ArduinoJson/src tests/schedule_storage_test.cpp -o schedule-storage-test
+./schedule-storage-test
 node tests/web_test.cjs
 ```
 
 Kiểm tra web cần package Playwright và Chromium. Đặt biến `DECO_BROWSER` bằng đường dẫn executable nếu Chromium không ở `/usr/bin/chromium`. Ảnh chụp web từ mock chỉ minh họa UI, không là bằng chứng thiết bị đã chạy.
 
-Người dùng đã lắp và thử 1.2.0, có phản hồi chuyển màu/Lấp lánh; bảng nền chưa có kết quả từng ca để đánh dấu Đạt. Bản 1.2.1 ưu tiên F01–F04 trên bo/vỏ thật để xác nhận thay đổi và giữ cấu hình sau OTA.
+Người dùng đã lắp và thử 1.2.0, có phản hồi chuyển màu/Lấp lánh; bảng nền chưa có kết quả từng ca để đánh dấu Đạt. Bản 1.3.0 ưu tiên A01–A12 trên ESP/router thật, đồng thời giữ F01–F04 để ghi kết quả ánh sáng khi thử lại.

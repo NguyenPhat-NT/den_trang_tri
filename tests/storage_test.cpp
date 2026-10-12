@@ -118,6 +118,20 @@ static void testNetworkStorage(){
  NetworkStorage unavailable;NetworkConfig missing;assert(!unavailable.begin(missing)&&!unavailable.save(missing)&&!unavailable.blocked);
  fakeNVS=FakeNVS{};
 }
+static void testMaintenanceBaseline(){
+ fakeNVS=FakeNVS{};Settings defaults;Storage fresh;fresh.begin(defaults);
+ assert(!fresh.dirty&&!fresh.hasSaved&&fresh.writes==0);
+ assert(fresh.saveNow(defaults)&&fresh.hasSaved&&fresh.writes==1);
+ const auto verified=fakeNVS.data;assert(fresh.saveNow(defaults)&&fresh.writes==1&&fakeNVS.data==verified);
+ Settings restored;Storage reboot;reboot.begin(restored);assert(reboot.hasSaved&&restored==defaults);
+ fakeNVS=FakeNVS{};fakeNVS.failOpen=true;Storage unavailable;unavailable.begin(defaults);
+ assert(!unavailable.dirty&&!unavailable.saveNow(defaults)&&!unavailable.hasSaved&&unavailable.error.length());
+ fakeNVS=FakeNVS{};Storage failed;failed.begin(defaults);fakeNVS.failWrite=true;
+ assert(!failed.saveNow(defaults)&&!failed.hasSaved&&!failed.writes);fakeNVS.failWrite=false;
+ fakeNVS.corruptWrite=true;assert(!failed.saveNow(defaults)&&!failed.hasSaved&&!failed.writes);fakeNVS.corruptWrite=false;
+ assert(failed.saveNow(defaults)&&failed.hasSaved&&failed.writes==1);
+ fakeNVS=FakeNVS{};
+}
 int main(){
  Settings s;Storage a;a.begin(s);s.power=true;a.changed(s,0);a.tick(s,9999);assert(a.writes==0&&a.dirty);s.light.brightness=20;a.changed(s,6000);a.tick(s,10000);assert(a.writes==0);a.tick(s,16000);assert(a.writes==1&&!a.dirty);
  Settings restored;Storage b;b.begin(restored);assert(restored==s);
@@ -129,6 +143,6 @@ int main(){
  // Invalid schema does not overwrite future data.
  auto& bytes=fakeNVS.data["deco-light/slot-b"];assert(bytes.size()>16);bytes[4]=LIGHT_SCHEMA_VERSION+1;Settings future;Storage e;e.begin(future);assert(e.blocked&&!future.power);future.power=true;e.changed(future,0);assert(!e.saveNow(future));
  fakeNVS=FakeNVS{};Settings invalid;String text=encodeSettings(invalid);Settings roundtrip;assert(decodeSettings(text,roundtrip)&&roundtrip==invalid);assert(!decodeSettings(String("{}"),roundtrip));
- testLightUpgrade();testNetworkStorage();
- std::cout<<"PASS: delayed save/recovery, legacy mode/settings migration, mixed light schemas/new favorites, torn writes, future protection, network migration/hostname/CRC repair\n";
+ testLightUpgrade();testNetworkStorage();testMaintenanceBaseline();
+ std::cout<<"PASS: delayed save/recovery, verified first-boot maintenance baseline/no-op/open-write-readback failures, legacy mode/settings migration, mixed light schemas/new favorites, torn writes, future protection, network migration/hostname/CRC repair\n";
 }

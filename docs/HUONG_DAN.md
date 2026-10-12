@@ -1,4 +1,4 @@
-# Hướng dẫn Đèn Deco 1.2.1
+# Hướng dẫn Đèn Deco 1.3.0
 
 Ngày bàn giao: 12/10/2026. Dành cho Windows và Arduino IDE.
 
@@ -11,6 +11,7 @@ Ngày bàn giao: 12/10/2026. Dành cho Windows và Arduino IDE.
 - Web tiếng Việt nằm trong firmware. Quét/chọn WiFi nhà 2,4 GHz, AP dự phòng không mật khẩu và địa chỉ mặc định `http://den-deco.local` chỉnh được.
 - Hẹn giờ, ba mục yêu thích, lưu trạng thái và cập nhật OTA qua trình duyệt.
 - 14 chế độ: sáu chế độ cũ cùng tám hiệu ứng mới; mục **Hướng dẫn sử dụng** nằm ngay trên web.
+- Tám dòng lịch tuần bật/tắt, giờ Internet Việt Nam UTC+7, bình minh tăng sáng và bật đèn lúc mặt trời lặn; mặc định các tự động mới tắt.
 
 ## 2. Đấu nối
 
@@ -76,7 +77,7 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 7. Bấm Verify rồi Upload. Nếu không nhận COM, giữ BOOT, bấm/thả RESET rồi thả BOOT; chọn lại COM và nạp. Các bo có thể ghi nút là B/BOOT và R/RESET.
 8. Sau nạp, bấm RESET nếu cần. Mở Serial Monitor **115200 baud**. Lần đầu chưa có bản lưu, đèn ở trạng thái tắt.
 
-Bộ core/thư viện người dùng đang có là ESP32 3.3.1, NeoPixel 1.15.5 và ArduinoJson 7.4.3; giữ bộ này để biên dịch. Thông tin build và file OTA 1.2.1 ghi trong `BUILD_INFO.md`. Profile PlatformIO 2.0.17 là phương án build bổ sung; không cần đổi bộ Arduino IDE hiện tại về phiên bản đó. Người dùng đã lắp và thử bản 1.2.0; bản 1.2.1 mới cần thử lại trên bo/vỏ thực tế. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
+Bộ core/thư viện người dùng đang có là ESP32 3.3.1, NeoPixel 1.15.5 và ArduinoJson 7.4.3; giữ bộ này để biên dịch. Thông tin build và file OTA 1.3.0 ghi trong `BUILD_INFO.md`. Profile PlatformIO 2.0.17 là phương án build bổ sung; không cần đổi bộ Arduino IDE hiện tại về phiên bản đó. Người dùng đã lắp và thử bản 1.2.0; các tính năng giờ/lịch của 1.3.0 mới cần thử trên bo thực tế. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
 
 ## 4. Kết nối web lần đầu
 
@@ -161,7 +162,63 @@ Thanh sáng 1–100 là thang cảm nhận, được ánh xạ gamma 2,2. Trần
 
 Đổi thông số hiệu chỉnh trong `Config.h` nếu cần, rồi biên dịch lại. Không tăng trần kỹ thuật trước khi đo dòng, điện áp và nhiệt đường cấp nguồn. Firmware không có phép đo dòng hay nhiệt tự động.
 
-## 7. Lưu trạng thái
+## 7. Giờ Internet, lịch tuần và mặt trời
+
+### Giờ Việt Nam và kết nối
+
+Các lịch dùng giờ Việt Nam **UTC+7**, không đổi múi giờ theo tọa độ hoặc giờ của điện thoại. ESP đồng bộ giờ thực qua **SNTP** bất đồng bộ khi WiFi nhà có Internet; trang hiển thị giờ và trạng thái đồng bộ. Đèn chỉ đang phát AP lần đầu thì chưa có Internet để lấy giờ, nên các lịch chờ đến khi đồng bộ thành công. Cảm ứng, web và hiệu ứng vẫn dùng được trong lúc chờ.
+
+Sau khi đã đồng bộ trong phiên chạy, mất WiFi/Internet vẫn tiếp tục giữ giờ bằng đồng hồ của ESP và các lịch vẫn hoạt động; độ chính xác có thể trôi nếu mất mạng lâu. Khi router có Internet trở lại, ESP tiếp tục đồng bộ. Sau mất nguồn/reboot, cần lấy giờ Internet lại trước khi lịch chạy; thiết bị không có RTC có pin để giữ giờ khi mất điện.
+
+**Không chạy bù sự kiện bị lỡ.** Khi mới khởi động/đồng bộ lần đầu, lưu sửa kế hoạch, giờ bị nhảy hoặc kết thúc OTA, firmware lấy phút hiện tại làm mốc và chỉ chờ các phút kế tiếp. Vì vậy, lịch trùng phút đang cấu hình sẽ không bật đèn ngay; đặt giờ thử ít nhất một phút phía trước và lưu trước khi đến phút đó. Các lần đồng bộ định kỳ bình thường không chạy lại sự kiện đã thực hiện.
+
+### Tám dòng lịch tuần
+
+1. Trước khi tạo lịch bật, chuẩn bị ánh sáng rồi bấm **Lưu hiện tại** ở một trong ba mục yêu thích.
+2. Trong mục lịch trên web, bật sử dụng lịch tuần. Có tối đa **tám dòng**; mỗi dòng chọn bật/tắt, giờ `HH:MM`, một hoặc nhiều thứ từ Thứ Hai đến Chủ nhật và bật sử dụng dòng đó.
+3. Với dòng **bật**, chọn **Mục 1/2/3**; với dòng tắt không cần mục yêu thích. Bấm lưu kế hoạch và kiểm tra trạng thái lưu thành công.
+
+Khi đến giờ bật, đèn đọc **nội dung hiện đang lưu** trong mục yêu thích đã chọn, áp dụng mode/màu/độ sáng/tốc độ và bật đèn. Sửa mục yêu thích trước lần lịch tiếp theo sẽ làm lần bật đó dùng cấu hình mới; lịch chỉ giữ số mục, không chép cố định màu vào dòng lịch. Nếu mục đã chọn trống hoặc dữ liệu ánh sáng không hợp lệ, sự kiện bật đó được bỏ qua an toàn. Muốn hủy một dòng, tắt sử dụng dòng rồi lưu; tắt lịch tuần không xóa các dòng đã nhập.
+
+Ô đang chỉnh là bản nháp cho đến khi lưu thành công. Trang giữ các ô đang sửa khi cập nhật trạng thái định kỳ; giờ đèn vẫn chạy theo kế hoạch đã lưu. Các lịch/tọa độ được lưu riêng trong NVS, giữ qua reboot và OTA. Không phải chờ mốc lưu ánh sáng 10 giây để áp dụng kế hoạch đã lưu.
+
+### Bình minh và bật lúc mặt trời lặn
+
+Tọa độ đã chốt là **TP.HCM: vĩ độ 10.776, kinh độ 106.7**. Có thể nhập vĩ độ **−89 đến 89**, kinh độ **−180 đến 180** nếu đổi nơi dùng đèn. Các giờ hiển thị vẫn là UTC+7. Bình minh và mặt trời lặn là **hai lựa chọn độc lập**, mặc định đều tắt; mỗi lựa chọn có các thứ hoạt động và độ lệch **−120 đến +120 phút** riêng. Độ lệch âm chạy sớm, dương chạy muộn so với giờ mặt trời.
+
+| Tự động | Thời điểm bắt đầu | Ánh sáng |
+| --- | --- | --- |
+| Bình minh | Đúng giờ mặt trời mọc, cộng độ lệch đã chọn | Khi đang tắt, tăng từ 0 lên mục yêu thích hoặc màu ấm có sẵn trong **30 phút**, chỉnh được **1–120 phút** |
+| Mặt trời lặn | Đúng giờ mặt trời lặn, cộng độ lệch đã chọn | Bật mục yêu thích hoặc màu ấm có sẵn |
+
+Màu ấm có sẵn là **RGB (255,160,72), độ sáng 35%** trên thang sáng chính, vẫn chịu trần đầu ra. Lựa chọn này dùng được dù chưa lưu mục yêu thích. Nếu chọn Mục 1/2/3, tự động đọc cấu hình mục đó khi bắt đầu sự kiện; mục trống/hỏng thì bỏ qua, không tự đổi sang màu ấm.
+
+Bình minh **bắt đầu tăng tại giờ mặt trời mọc**, không tăng trước để đạt sáng tối đa đúng lúc mọc. Độ lệch cho phép dời thời điểm bắt đầu nếu muốn; kết thúc tăng sau thời lượng đã chọn. Các thao tác điều khiển ánh sáng bằng cảm ứng/web dừng lần tăng đang chạy và áp dụng lệnh tay. Việc này không tắt các lịch: sự kiện tương lai vẫn tiếp tục chạy.
+
+Nếu đèn đã bật, Bình minh chuyển từ mức đang hiển thị tới mức đích. Các bước tăng sáng chạy trong RAM; cấu hình ánh sáng được lưu khi hoàn tất hoặc khi bạn dừng bằng tay. Lưu kế hoạch hoặc bắt đầu OTA cũng dừng lần tăng hiện tại ở mức gần nhất có thể lưu. Nếu mất nguồn trong lúc tăng, đèn khôi phục cấu hình trước khi bắt đầu, rồi chờ đồng bộ giờ và sự kiện tương lai; không tăng tiếp giữa chừng. Nếu chưa lưu được cấu hình nền, sự kiện Bình minh được bỏ qua và web báo lỗi.
+
+Giờ mọc/lặn được tính **trên ESP** theo công thức thiên văn kiểu NOAA và tọa độ/ngày, với giả định đường chân trời chuẩn; giờ được làm tròn đến phút. Đây là ước tính thiên văn, **không phải dự báo thời tiết**; không cần tài khoản, API key hay dịch vụ thời tiết. Mây, địa hình, nhà cửa và cách nhìn mặt trời thực tế có thể làm thời điểm quan sát khác với giờ tính. Nếu vị trí/ngày không có sự kiện mọc hoặc lặn hợp lệ, tự động tương ứng không chạy ngày đó; lịch tuần theo giờ vẫn dùng được.
+
+**Hoàng hôn** trong danh sách 14 hiệu ứng (mã 11) vẫn là một hiệu ứng màu. Tự động lúc mặt trời lặn là lịch bật theo giờ thiên văn; chỉ chọn mục yêu thích chứa hiệu ứng Hoàng hôn khi muốn lịch bật vào hiệu ứng này.
+
+### Trùng lịch và hẹn giờ đếm ngược
+
+Mỗi phút sự kiện chỉ được quyết định một lần theo thứ tự ưu tiên:
+
+1. Có lịch tuần **tắt**: tắt thắng tất cả lịch bật và sự kiện mặt trời trùng phút.
+2. Nếu không có lịch tắt, lịch tuần **bật** thắng sự kiện mặt trời; nhiều dòng bật cùng phút thì dòng bật sau cùng trong danh sách thắng.
+3. Nếu chỉ có hai sự kiện mặt trời trùng phút, **mặt trời lặn** thắng bình minh.
+
+Đèn áp dụng kết quả được chọn một lần, tránh bật rồi tắt do nhiều sự kiện cùng phút. Sự kiện lịch được áp dụng sẽ hủy hẹn giờ đếm ngược đang chạy. Hẹn giờ đếm ngược 1–180 phút vẫn là chức năng riêng; các lần lịch tương lai không bị hủy khi thao tác tay hoặc đặt/hủy đếm ngược.
+
+### Thử nhanh trên đèn
+
+- **Lịch tuần một phút:** đợi trang có giờ đồng bộ, lưu Mục 1, đặt một dòng bật cho hôm nay ở phút kế tiếp và một dòng tắt một phút sau đó. Lưu trước giờ bật, giữ trang mở để đối chiếu giờ và trạng thái. Nếu đã sang phút bật lúc lưu, đặt lại sang phút sau; không sửa đồng hồ để ép chạy.
+- **Giữ giờ khi mất WiFi:** sau khi đã đồng bộ, đặt lịch tương lai rồi tắt router; kiểm tra giờ tiếp tục chạy và sự kiện đến đúng phút. Bật router lại, kiểm tra đồng bộ/khôi phục. Reboot khi không có Internet phải chờ giờ mới, không chạy bù lịch cũ.
+- **Bình minh thử ngắn:** bật bình minh cho hôm nay, chọn màu ấm có sẵn và thời lượng 1 phút. Dùng độ lệch ±120 phút để dời giờ mặt trời mọc sang một phút tương lai nếu thời điểm hiện tại nằm trong phạm vi đó; nếu không, thử gần giờ mọc ngày tiếp theo. Giữ đồng hồ thực; không giả giờ và không dùng chế độ mô phỏng để xác nhận phần cứng. Sau thử trả thời lượng/độ lệch về giá trị dùng hằng ngày.
+- **OTA giữ kế hoạch:** lưu các dòng/tọa độ, thực hiện OTA 1.3.0 rồi kiểm tra lại. Đợi SNTP đồng bộ sau reboot và đặt một sự kiện tương lai mới; sự kiện bị lỡ trong OTA không được chạy bù.
+
+## 8. Lưu trạng thái
 
 Sau thay đổi thực sự, đèn áp dụng ngay rồi chờ **10 giây từ thay đổi cuối** để lưu. Web hiển thị Đang chờ lưu, Đã lưu sau khi ghi/đọc kiểm tra thành công, hoặc lỗi lưu. Chưa có bản lưu sẽ hiển thị Cấu hình mặc định.
 
@@ -171,25 +228,25 @@ Rút nguồn trước 10 giây sẽ mất phần chỉnh chưa lưu. Hiệu ứn
 
 Firmware có hai bản NVS, CRC và số thế hệ; boot chọn bản hợp lệ mới nhất. Khi ghi lỗi, giữ RAM và thử lại sau 5 giây. Khi gặp schema mới hơn, không tự ghi đè bằng firmware cũ.
 
-Bản 1.2.1 tiếp tục đọc dữ liệu ánh sáng schema 1 và 2, ghi schema 2 như bản 1.2.0. Nâng cấp OTA 1.2.0 → 1.2.1 giữ cấu hình đèn, cả 14 mã chế độ, ba mục yêu thích, WiFi, tên và tên truy cập. Nâng cấp từ 1.1.0 giữ các cấu hình/mục yêu thích cũ vì sáu mã chế độ đầu không đổi. Nếu cần quay lại 1.1.0 sau khi dữ liệu đã lưu schema 2, dùng USB: firmware cũ có thể không đọc được schema mới và sẽ không ghi đè dữ liệu đó.
+Bản 1.3.0 tiếp tục đọc dữ liệu ánh sáng schema 1 và 2, ghi schema 2 như bản 1.2.x. Nâng cấp OTA từ 1.2.x giữ cấu hình đèn, cả 14 mã chế độ, ba mục yêu thích, WiFi, tên và tên truy cập. Kế hoạch tuần/bình minh/mặt trời lặn và tọa độ lưu riêng trong namespace NVS `deco-plan`; không đổi schema ánh sáng. Nâng cấp từ 1.1.0 giữ các cấu hình/mục yêu thích cũ vì sáu mã chế độ đầu không đổi. Nếu cần quay lại 1.1.0 sau khi dữ liệu đã lưu schema 2, dùng USB: firmware cũ có thể không đọc được schema mới và sẽ không ghi đè dữ liệu đó.
 
-## 8. Cập nhật OTA
+## 9. Cập nhật OTA
 
 Lần nạp đầu tiên vẫn qua USB để có firmware và bảng phân vùng OTA. Sau đó dùng web qua WiFi nhà hoặc AP:
 
 1. Trong Arduino IDE, giữ nguyên board 4 MB và Partition Scheme có OTA; chọn Sketch → Export Compiled Binary.
-2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.2.1-ota.bin`; dùng để nâng cấp đèn đang chạy 1.2.0 hoặc 1.1.0.
+2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.3.0-ota.bin`; dùng để nâng cấp đèn đang chạy 1.2.x hoặc 1.1.0.
 3. Mở Cập nhật firmware qua WiFi trên web, chọn file, bấm Cập nhật firmware và xác nhận.
 4. Firmware lưu ngay các thay đổi đang chờ trước khi bắt đầu OTA, thay vì chờ 10 giây trong phiên bảo trì này. Khi lưu không thành công hoặc schema không hỗ trợ, OTA chưa bắt đầu.
 5. Giữ nguồn và kết nối ổn định. Ánh sáng giữ khung hình hiện tại; cảm ứng, hiệu ứng và xử lý hẹn giờ tạm dừng trong lúc upload; bộ đếm thời gian chạy vẫn trôi. Không dùng điều khiển bình thường cho tới khi hoàn tất.
 6. File được ghi vào phân vùng ứng dụng còn lại, kiểm tra kích thước, header/chip ESP32-C3, dấu ứng dụng và kiểm tra ảnh của thư viện Update. Khi hợp lệ, đèn trả thành công rồi khởi động lại sau khoảng 1,8 giây. Trang thử đồng bộ lại sau khoảng 7 giây.
 7. Đèn khôi phục trạng thái đã lưu, tên/tên truy cập và WiFi. Hẹn giờ không tiếp tục sau khởi động, giống quy tắc mất điện. Nếu đang OTA qua AP và đã lưu WiFi nhà hợp lệ, sau reboot đèn nối mạng nhà rồi tắt AP; chuyển điện thoại/PC về mạng nhà và mở địa chỉ `.local` hoặc IP.
 
-Giới hạn của phân vùng ứng dụng mặc định là 1.310.720 byte; kích thước file 1.2.1 được ghi trong `BUILD_INFO.md`. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
+Giới hạn của phân vùng ứng dụng mặc định là 1.310.720 byte; kích thước file 1.3.0 được ghi trong `BUILD_INFO.md`. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
 
 Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, ứng dụng đang chạy vẫn được giữ. Nếu mất điện sau khi đã ghi firmware hợp lệ và chọn boot, lần bật sau có thể chạy firmware mới. Nếu firmware mới hợp lệ về định dạng nhưng có lỗi chạy, bản này chưa có rollback tự động sau boot; khôi phục bằng USB. Phiên OTA kiểm tra token và cùng origin; dùng trong mạng nội bộ, không mở cổng điều khiển ra Internet. Bản này chưa xác minh chữ ký số firmware.
 
-## 9. Thử lần đầu và chẩn đoán
+## 10. Thử lần đầu và chẩn đoán
 
 1. Nạp với nguồn LED tháo ra khi cần tránh tải trên USB PC.
 2. Có thể nạp `LED_Check/LED_Check.ino` với cùng cấu hình IDE để thử dây ở mức thấp: toàn bộ LED lần lượt đỏ/xanh lá/xanh dương, sau đó LED 0/9/10/19 sáng riêng, rồi từng cặp đi lên. Serial Monitor báo bước thử và OUT từng cảm ứng. Sketch này không sửa NVS; sau thử nạp lại `DenDeco/DenDeco.ino`. Hoặc sau đấu đúng và dùng nguồn hằng ngày, bật Một màu ở mức thấp để kiểm tra các kênh. Nếu xanh/đỏ đổi chỗ, sửa `NEO_GRB` ở sketch theo dây thực tế rồi nạp lại.
@@ -204,4 +261,4 @@ Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, 
 
 Không thấy AP: đợi 30 giây nếu đã lưu mạng; nếu WiFi nhà đang kết nối, AP đã tắt đúng thiết kế. Muốn cấu hình lại từ cảm ứng, giữ đúng +/− 5 giây sau khi đã khởi động và thả hết nút. AP không yêu cầu mật khẩu. Trang AP mất kết nối ngay sau Lưu & kết nối: chuyển sang WiFi nhà và mở `.local` hoặc IP. Không mở được `.local`: kiểm tra cùng mạng, tên truy cập và dùng IP từ router/Serial. Không thấy mạng khi quét: xác nhận mạng 2,4 GHz, thử lại hoặc nhập SSID thủ công. Đèn chạm tự bật: kiểm tra module direct active high, dây và vùng cảm ứng/vỏ. OTA báo file sai: chọn đúng ứng dụng `.ino.bin`, không dùng bootloader/merged.
 
-Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. Người dùng đã thử bản 1.2.0 trên đèn, báo bước chuyển màu còn lớn và Lấp lánh khó thấy do mật độ LED lớn. **Bản 1.2.1 mới cần thử lại trên bo/vỏ đó**; độ mượt/độ tương phản chưa được xác nhận từ mô phỏng. Sau nâng cấp, ưu tiên các ca F01–F04 về chuyển màu, pha khi đổi tốc độ, Lấp lánh và giữ cấu hình; ghi kết quả trong `KIEM_THU.md`.
+Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. Người dùng đã thử bản 1.2.0 trên đèn, có phản hồi chuyển màu/Lấp lánh. **Giờ SNTP, lịch tuần, bình minh và mặt trời lặn của bản 1.3.0 mới cần thử trên bo thật**; mô phỏng không xác nhận đường mạng SNTP hoặc độ sáng cảm nhận. Sau nâng cấp, ưu tiên các ca A01–A12, giữ các ca ánh sáng/nguồn/cảm ứng để bổ sung kết quả; ghi kết quả trong `KIEM_THU.md`.

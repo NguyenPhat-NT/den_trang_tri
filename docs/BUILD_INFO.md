@@ -1,32 +1,31 @@
-# Build Đèn Deco 1.2.1 — 12/10/2026
+# Build Đèn Deco 1.3.0 — 12/10/2026
 
 ## File OTA trong gói
 
-- Arduino CLI 1.3.1; target ESP32C3 Dev Module, flash 4 MB và USB CDC bật. Board option `FlashMode=qio`; header ứng dụng dùng DIO theo recipe của core.
-- Arduino ESP32 3.3.1, Adafruit NeoPixel 1.15.5, ArduinoJson 7.4.3, giữ bộ phiên bản người dùng đang có.
-- Phân vùng default.csv: NVS 0x9000, OTA data 0xe000, app0 0x10000 và app1 0x150000; mỗi app 0x140000 (1.310.720 byte).
-- Build cuối: SUCCESS; sketch 1.147.970/1.310.720 byte (87%), RAM tĩnh 40.096/327.680 byte (12%). File ảnh ứng dụng 1.148.112 byte; SHA-256 đã đối chiếu và ghi ở `firmware/SHA256SUMS.txt`.
+- Arduino CLI 1.3.1; ESP32C3 Dev Module, USB CDC bật, flash 4 MB, phân vùng Default có OTA. Board option `FlashMode=qio`; header ứng dụng dùng DIO theo recipe của core.
+- Arduino ESP32 **3.3.1**, Adafruit NeoPixel **1.15.5**, ArduinoJson **7.4.3**, đúng bộ phiên bản người dùng đang có.
+- Build cuối **SUCCESS**: sketch **1.226.900 / 1.310.720 byte (93%)**, RAM tĩnh **40.816 / 327.680 byte (12%)**.
+- File `firmware/DenDeco-1.3.0-ota.bin`: **1.227.040 byte**, còn **83.680 byte** trong một phân vùng ứng dụng 0x140000.
+- SHA-256: `1344dff881a640ee9f38c53b052f5f1cf53685fe558a22757dc707575bc4fd68`.
 
-File `firmware/DenDeco-1.2.1-ota.bin` là ứng dụng, không chứa bootloader hoặc bảng phân vùng. Header được kiểm tra có magic ảnh ESP, chip ESP32-C3 và app descriptor; ảnh nằm trong phân vùng OTA. esptool kiểm tra checksum và image hash hợp lệ. Sáu tệp nguồn dùng để build khớp bản đóng gói. Nạp đầu qua USB theo hướng dẫn; file này dùng cho cập nhật từ web sau đó.
+File OTA chứa ứng dụng, không chứa bootloader/bảng phân vùng. Header đã kiểm tra magic ảnh ESP, chip ESP32-C3 và app descriptor; esptool 4.9.0 xác nhận checksum và image hash hợp lệ. Toàn bộ mười tệp `.ino`/`.h` trong thư mục DenDeco khớp snapshot dùng build. Nạp đầu bằng USB theo hướng dẫn; file này dùng cập nhật qua web sau đó.
 
-## Profile PlatformIO được kiểm tra riêng
+Phân vùng default.csv: NVS 0x9000, OTA data 0xe000, app0 0x10000 và app1 0x150000; mỗi app **0x140000 (1.310.720 byte)**. OTA không đổi bảng phân vùng.
 
-`platformio.ini` giữ profile ESP32-C3 đã có: PlatformIO Core 6.1.18, espressif32 6.12.0, board esp32-c3-devkitm-1, Arduino ESP32 2.0.17, NeoPixel 1.12.5 và ArduinoJson 7.4.2. Build cuối SUCCESS: flash code/data 900.578/1.310.720 byte, RAM tĩnh 42.756/327.680 byte. Đây là profile kiểm tra thêm; file OTA 1.2.1 được bàn giao là build 3.3.1 ở trên.
+## Profile PlatformIO kiểm tra riêng
 
-## Kiểm tra phần mềm
+PlatformIO Core 6.1.18, espressif32 6.12.0, board esp32-c3-devkitm-1, Arduino ESP32 **2.0.17**, NeoPixel **1.12.5**, ArduinoJson **7.4.2**. Build cuối **SUCCESS**: flash code/data **972.516 / 1.310.720 byte**, RAM tĩnh **43.476 / 327.680 byte**. File OTA bàn giao là build **3.3.1** ở trên.
 
-- Core: C++11, cảnh báo nghiêm ngặt, AddressSanitizer/UndefinedBehaviorSanitizer — PASS. Kiểm tra đủ 14 mode/tint/yêu thích/cap/tắt/timer/fade; giữ pha khi đổi tốc độ, đầu ra chính xác ở khung đầu chuyển tiếp, mẫu làm tròn cố định không nhấp nháy theo thời gian, chu kỳ dài/tràn thời gian và cụm Lấp lánh thưa.
-- Kiểm tra độc lập 11.648 trường hợp renderer — PASS; bao gồm trần 3/30%, timer 50% sai số tối đa một mã, khung đầu/partial fade, tốc độ, tắt và tràn thời gian.
-- Lưu trữ/schema ánh sáng 2, trường cấu hình, 14 ID, mục yêu thích và chính sách WiFi không sửa ở bản 1.2.1. Các kiểm tra lưu/migration thành công của bản 1.2.0 ghi trong `KIEM_THU.md`.
-- Playwright/Chromium — PASS. Bộ kiểm tra điều khiển, WiFi, ô nhập, màu/tốc độ/OTA giữ nguyên đạt; mô tả Lấp lánh trên nền tối đã kiểm tra. Sau khi đổi riêng lời khuyên độ sáng/tốc độ theo phòng/vỏ, kiểm tra nhắm tới hướng dẫn/bàn phím/layout cũng đạt.
-- Màn hình 390×844 và 1280×900: không tràn ngang, không có lỗi JavaScript.
+`LED_Check` giữ nguyên nguồn và kết quả build từ bản trước; không biên dịch lại hoặc thử bo trong lần bổ sung lịch này.
 
-`LED_Check` giữ nguyên nguồn từ bản 1.0.0; đã build với profile trên ở bản trước (flash 248.858 byte, RAM tĩnh 13.964 byte).
+## Kiểm tra phần mềm bản 1.3.0
 
-## So sánh mô phỏng 1.2.0 → 1.2.1
+- **Core — PASS**: C++11, cảnh báo nghiêm ngặt, ASan/UBSan; đủ 14 chế độ, tint/favorite, trần, timer, cảm ứng, reset WiFi và cải tiến chuyển màu/Lấp lánh đã có.
+- **Lịch tuần — PASS**: tám mục, UTC+7/ngày trong tuần/qua nửa đêm, phạm vi ngày, favorite, phút đồng bộ đầu, sửa lịch, không chạy bù, chống lặp khi giờ đi lùi và gom sự kiện ON/OFF.
+- **Mặt trời — PASS**: tham chiếu độc lập PyEphem/XEphem, TP.HCM và các vị trí khác, biên đường đổi ngày, năm nhuận và epoch 64 bit, vùng không mọc/lặn, offset vượt nửa đêm dùng ngày gốc, cache và chống lặp. Với TP.HCM ngày 12/10/2026, mốc làm tròn **05:42 / 17:37 UTC+7**; mô hình tham chiếu dùng chân trời −0,833° tại mực nước biển.
+- **Tự động/renderer — PASS**: ưu tiên OFF > ON tuần cuối > mặt trời, dusk > dawn; preset trực tiếp, mục trống/hỏng không đổi sang cấu hình khác; ramp từ đen tới đích, đối xứng/trần, tràn millis, dừng bằng tay, tắt đầu ramp không tăng sáng thoáng qua; phát hiện clock step so với millis. Nội suy RAM, không ghi flash từng bước.
+- **Lưu trữ — PASS**: baseline mặc định chỉ ghi một lần khi lưu bảo trì; lỗi mở/ghi/readback không được báo thành công. Schema ánh sáng 2, migration và lưu mạng tiếp tục đạt. Kế hoạch namespace `deco-plan` dùng hai slot/CRC/schema 1, kiểm tra JSON, lỗi ghi dở/readback, phục hồi, thế hệ tràn và bảo vệ dữ liệu tương lai.
+- **Web Playwright/Chromium — PASS**: tám mục giờ/ngày/favorite, tọa độ E6/TP.HCM, preset ấm và target favorite, giữ bản nháp qua polling/lỗi/phản hồi muộn, xác nhận bỏ nháp, trạng thái giờ/mất WiFi, không phát lại POST khi nối lại. Các kiểm tra 14 mode, hướng dẫn, ánh sáng, WiFi/mDNS/clipboard, timer và OTA vẫn đạt; không lỗi JavaScript hoặc tràn ngang ở 390×844 và 1280×900.
+- **Rà soát tích hợp — hoàn tất**: callback SNTP chỉ báo về loop, không chờ lấy giờ; phút đầu/edit/clock step/OTA resume không chạy bù; xác minh baseline trước khi bắt đầu Bình minh, một lựa chọn tự động được áp dụng sau khi gom tất cả sự kiện.
 
-Chuyển màu ở độ sáng 5%, tốc độ 50, mẫu 16 ms: số màu RGB tổng hợp 36 → 366; bước màu tổng hợp tối đa mỗi kênh 1 → 0,1 mã; thời gian giữ nguyên toàn bộ khung dài nhất 1.872 → 176 ms. Ở độ sáng 100% và tốc độ 100, bước lớn nhất từng LED 8 → 1 mã trong 16 ms; bản 1.2.0 thực dùng khung 33 ms có thể nhảy tới 16 mã. Những số này dành riêng cho ca Chuyển màu đã đo, không suy ra mọi bảng màu đều mượt hơn ở mức sáng 5%.
-
-Với Lấp lánh RGB trắng, mô hình tán sáng Gaussian rộng 1,5 tầng LED cho thấy cụm sáng phân biệt hơn: khoảng 9,65 → 2,45 tầng gần mức sáng đỉnh. Chế độ mới ít LED sáng cùng lúc nên tổng ánh sáng thấp hơn và có khoảng tối giữa các cụm; mô hình không xác nhận hình dạng/tán sáng của vỏ thực tế.
-
-Người dùng đã thử 1.2.0 và báo bước chuyển màu lớn, Lấp lánh khó nhận ra do mật độ LED. Bản 1.2.1 đã kiểm tra phần mềm; cảm nhận màu/cụm sáng, độ sáng phù hợp và OTA giữ cấu hình cần thử lại trên bo/vỏ thật. Chưa nạp thiết bị từ môi trường cloud.
+Host và web mock kiểm tra thuật toán/giao diện, không xác nhận SNTP, truyền OTA, thời gian giữ khi mất WiFi hoặc ánh sáng thực trên ESP. Bảng **A01–A12** trong `KIEM_THU.md` dành cho lần thử trên bo/router/vỏ thật. Chưa nạp thiết bị từ môi trường cloud.

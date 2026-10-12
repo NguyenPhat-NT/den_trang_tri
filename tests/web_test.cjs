@@ -13,7 +13,7 @@ const path = require('path');
   modeIds.forEach((name, id) => assert(new RegExp('\\b' + name + '\\s*=\\s*' + id + '\\b').test(core), 'Firmware mode ID drift: ' + name));
   assert(!/<(?:script|link)\b[^>]*(?:src|href)=["']https?:\/\//i.test(html), 'UI/help must be self-contained');
   const s = {
-    version: '1.2.1', name: 'Đèn Deco', token: 'test-session', revision: 0,
+    version: '1.3.0', name: 'Đèn Deco', token: 'test-session', revision: 0,
     power: false, light: { mode: 0, r: 255, g: 96, b: 24, brightness: 5, speed: 50 },
     sleepBrightness: 5, cap: 30, ledCount: 20,
     favorites: Array.from({ length: 3 }, () => ({ valid: false, light: { mode: 0, brightness: 5 } })),
@@ -22,12 +22,24 @@ const path = require('path');
     apActive: false, apSSID: 'DenDeco-TEST', hostname: 'den-deco', requestedHostname: 'den-deco',
     localUrl: 'http://den-deco.local', mdnsReady: true,
     networkStatus: 'connected', networkMessage: 'Đã kết nối WiFi nhà.', disconnectReason: 0,
-    otaMaxBytes: 1310720
+    otaMaxBytes: 1310720,
+    clock: { ready: false, online: true, syncing: true, utc: 0, localTime: '', localDate: '', lastSyncUtc: 0, zone: 'UTC+7' },
+    schedules: { enabled: false, entries: Array.from({ length: 8 }, () => ({ enabled: false, days: 0, minute: 0, power: false, favorite: -1 })) },
+    sun: {
+      latitudeE6: 10776000, longitudeE6: 106700000,
+      dawn: { enabled: false, days: 127, offset: 0, minutes: 30, favorite: -1, brightness: 35 },
+      dusk: { enabled: false, days: 127, offset: 0, minutes: 30, favorite: -1, brightness: 35 },
+      sunrise: '', sunset: ''
+    },
+    automation: { active: false, kind: 'dawn', brightness: 0, target: 35, remainingMs: 0, error: '' },
+    scheduleSaveError: '', scheduleSaved: true
   };
-  const commands = [], networkCalls = [], errors = [];
+  const commands = [], networkCalls = [], scheduleCalls = [], sunCalls = [], errors = [];
   let offline = false, otaCalls = 0, scanStarts = 0, scanGets = 0;
   let scanError = '', scanGetError = '', networkError = '', networkReconnect = false, networkDelay = 0;
   let commandDelay = 0, otaError = '', otaDelay = 0;
+  let scheduleError = '', sunError = '', automationDelay = 0, automationAbort = '';
+  let stateGets = 0;
   const networks = [
     { ssid: 'Home 2.4G', rssi: -35, channel: 6, secure: true, security: 'WPA2' },
     { ssid: 'Cafe mở', rssi: -60, channel: 1, secure: false, security: 'OPEN' },
@@ -55,7 +67,45 @@ const path = require('path');
     const req = route.request(), url = new URL(req.url());
     if (url.pathname === '/') return route.fulfill({ status: 200, contentType: 'text/html', body: html });
     if (offline) return route.abort();
-    if (url.pathname === '/api/state') return route.fulfill({ json: s });
+    if (url.pathname === '/api/state') { stateGets++; return route.fulfill({ json: s }); }
+    if (url.pathname === '/api/schedules' || url.pathname === '/api/sun') {
+      assert.equal(req.method(), 'POST');
+      assert.equal(req.headers()['x-deco-token'], s.token);
+      const body = req.postDataJSON(), weekly = url.pathname === '/api/schedules';
+      (weekly ? scheduleCalls : sunCalls).push(body);
+      if (automationAbort === (weekly ? 'schedules' : 'sun')) { offline = true; return route.abort(); }
+      const failure = weekly ? scheduleError : sunError;
+      if (automationDelay) await new Promise(resolve => setTimeout(resolve, automationDelay));
+      if (failure) return route.fulfill({ status: 400, json: { error: failure } });
+      if (weekly) {
+        assert.deepEqual(Object.keys(body).sort(), ['enabled', 'entries']);
+        assert.equal(body.entries.length, 8);
+        body.entries.forEach(entry => {
+          assert.deepEqual(Object.keys(entry).sort(), ['days', 'enabled', 'favorite', 'minute', 'power']);
+          assert(Number.isInteger(entry.days) && entry.days >= 0 && entry.days <= 127);
+          assert(!entry.enabled || entry.days !== 0);
+          assert(Number.isInteger(entry.minute) && entry.minute >= 0 && entry.minute < 1440);
+          assert(entry.power ? entry.favorite >= 0 && entry.favorite <= 2 && s.favorites[entry.favorite].valid : entry.favorite === -1);
+        });
+        s.schedules = structuredClone(body);
+      } else {
+        assert.deepEqual(Object.keys(body).sort(), ['dawn', 'dusk', 'latitudeE6', 'longitudeE6']);
+        assert(Number.isInteger(body.latitudeE6) && Math.abs(body.latitudeE6) <= 89000000);
+        assert(Number.isInteger(body.longitudeE6) && Math.abs(body.longitudeE6) <= 180000000);
+        for (const event of [body.dawn, body.dusk]) {
+          assert.deepEqual(Object.keys(event).sort(), ['brightness', 'days', 'enabled', 'favorite', 'minutes', 'offset']);
+          assert(Number.isInteger(event.days) && event.days >= 0 && event.days <= 127);
+          assert(!event.enabled || event.days !== 0);
+          assert(Number.isInteger(event.offset) && event.offset >= -120 && event.offset <= 120);
+          assert(Number.isInteger(event.minutes) && event.minutes >= 1 && event.minutes <= 120);
+          assert(Number.isInteger(event.brightness) && event.brightness >= 1 && event.brightness <= 100);
+          assert(event.favorite === -1 || event.favorite >= 0 && event.favorite <= 2 && s.favorites[event.favorite].valid);
+        }
+        s.sun = { ...structuredClone(body), sunrise: s.sun.sunrise, sunset: s.sun.sunset };
+      }
+      s.revision++; s.scheduleSaved = true; s.scheduleSaveError = '';
+      return route.fulfill({ json: s });
+    }
     if (url.pathname === '/api/command') {
       assert.equal(req.headers()['x-deco-token'], s.token);
       const c = req.postDataJSON();
@@ -123,7 +173,7 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   assert.equal(await page.locator('#brightnessText').textContent(), '5');
   assert(await page.locator('#startTimer').isDisabled());
-  assert((await page.locator('#footer').textContent()).includes('firmware 1.2.1'));
+  assert((await page.locator('#footer').textContent()).includes('firmware 1.3.0'));
   assert.deepEqual(await page.locator('#mode option').allTextContents(), modeLabels);
   assert.deepEqual(await page.locator('#mode option').evaluateAll(options => options.map(option => +option.value)), Array.from({ length: 14 }, (_, i) => i));
   assert.deepEqual(await page.locator('#effectGuide li strong').allTextContents(), modeLabels);
@@ -205,7 +255,7 @@ const path = require('path');
   commandDelay = 0;
   await page.locator('#mode').selectOption('1'); await page.waitForFunction(() => state.light.mode === 1);
 
-  await page.locator('summary').nth(0).click();
+  await page.locator('details').filter({ has: page.locator('#wifiForm') }).locator('summary').click();
   assert.equal(await page.locator('#localAddress').inputValue(), 'http://den-deco.local');
   assert((await page.locator('#apHelp').textContent()).includes('không có mật khẩu'));
   assert((await page.locator('#apHelp').textContent()).includes('5 giây'));
@@ -325,12 +375,242 @@ const path = require('path');
   assert(!(await page.locator('#scanWiFi').isDisabled()));
   scanGetError = '';
 
+  // Automation lives in independent drafts: the 250 ms full-state poll may update
+  // the clock/status, but must never replace a schedule or solar edit.
+  await page.locator('#automationCard > summary').click();
+  assert(!(await page.locator('#schedulesEnabled').isChecked()));
+  assert(!(await page.locator('#dawnEnabled').isChecked()));
+  assert(!(await page.locator('#duskEnabled').isChecked()));
+  assert((await page.locator('#clockStatus').textContent()).match(/đồng bộ|chờ|giờ/i));
+  const clockRequestsBefore = stateGets;
+  s.clock = { ready: true, online: true, syncing: false, utc: 1791783000, localTime: '09:50:00', localDate: '12/10/2026', lastSyncUtc: 1791783000, zone: 'UTC+7' };
+  s.sun.sunrise = '05:43'; s.sun.sunset = '17:37'; s.revision++;
+  await page.waitForFunction(() => document.getElementById('clockTime').textContent.includes('09:50:00'));
+  assert((await page.locator('#clockDate').textContent()).includes('12/10/2026'));
+  assert((await page.locator('#sunriseTime').textContent()).includes('05:43'));
+  assert((await page.locator('#sunsetTime').textContent()).includes('17:37'));
+  assert(stateGets > clockRequestsBefore);
+
+  const visibleScheduleSlots = () => page.locator('#scheduleEntries [data-slot]').evaluateAll(rows => rows.filter(row => row.getClientRects().length).map(row => +row.dataset.slot));
+  for (let slot = 0; slot < 8; slot++) await page.locator('#addSchedule').click();
+  assert.deepEqual(await visibleScheduleSlots(), [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert(await page.locator('#addSchedule').isDisabled());
+  await page.locator('#scheduleTime1').fill('23:00');
+  await page.locator('[data-remove-slot="0"]').click();
+  assert.deepEqual(await visibleScheduleSlots(), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(await page.locator('#scheduleTime1').inputValue(), '23:00');
+  assert(!(await page.locator('#addSchedule').isDisabled()));
+  await page.locator('#addSchedule').click();
+  assert.deepEqual(await visibleScheduleSlots(), [0, 1, 2, 3, 4, 5, 6, 7]);
+  for (let slot = 2; slot < 8; slot++) await page.locator('[data-remove-slot="' + slot + '"]').click();
+  await page.locator('#schedulesEnabled').check();
+  await page.locator('#scheduleEnabled0').check();
+  await page.locator('#scheduleTime0').fill('07:15');
+  await page.locator('#schedulePower0').selectOption('on');
+  const favoriteAvailability = await page.locator('#scheduleFavorite0 option').evaluateAll(options => options.map(o => ({ value: o.value, disabled: o.disabled })));
+  assert(favoriteAvailability.some(o => o.value === '0' && !o.disabled));
+  assert(!favoriteAvailability.some(o => ['1', '2'].includes(o.value) && !o.disabled), 'Weekly ON must offer only existing valid favorites');
+  await page.locator('#scheduleFavorite0').selectOption('0');
+  for (let day = 0; day < 7; day++) await page.locator('#scheduleDay0_' + day).setChecked([0, 4].includes(day));
+  await page.locator('#scheduleEnabled1').check();
+  await page.locator('#schedulePower1').selectOption('off');
+  await page.locator('#scheduleFavorite1').evaluate(e => { e.value = '0'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+  for (let day = 0; day < 7; day++) await page.locator('#scheduleDay1_' + day).setChecked(day === 6);
+  const weeklyDraft = await page.locator('#schedulesForm').evaluate(form => Array.from(form.querySelectorAll('input,select')).map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));
+  const scheduleDraftText = await page.locator('#scheduleDraftStatus').textContent();
+  assert(scheduleDraftText.length > 0);
+  const pollCountBeforeDraft = stateGets;
+  await page.waitForTimeout(800);
+  assert(stateGets >= pollCountBeforeDraft + 2, 'Exercise repeated 250 ms state polling');
+  assert.deepEqual(await page.locator('#schedulesForm').evaluate(form => Array.from(form.querySelectorAll('input,select')).map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value])), weeklyDraft);
+  assert.equal(scheduleCalls.length, 0, 'Editing schedules must not save automatically');
+
+  // Required days, HH:MM and a valid favorite are checked before any write.
+  for (let day = 0; day < 7; day++) await page.locator('#scheduleDay0_' + day).uncheck();
+  await page.locator('#saveSchedules').click();
+  assert.equal(scheduleCalls.length, 0);
+  await page.locator('#scheduleDay0_0').check(); await page.locator('#scheduleDay0_4').check();
+  await page.locator('#scheduleTime0').fill('');
+  await page.locator('#saveSchedules').click(); assert.equal(scheduleCalls.length, 0);
+  await page.locator('#scheduleTime0').fill('07:15');
+  await page.locator('#scheduleFavorite0').evaluate(e => { e.value = '1'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.locator('#saveSchedules').click(); assert.equal(scheduleCalls.length, 0);
+  await page.locator('#scheduleFavorite0').selectOption('0');
+  scheduleError = 'Không lưu được lịch. Hãy thử lại.';
+  await page.locator('#saveSchedules').click();
+  await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Không lưu được lịch'));
+  assert.equal(scheduleCalls.length, 1);
+  assert.equal(await page.locator('#scheduleTime0').inputValue(), '07:15');
+  assert.equal(await page.locator('#scheduleDraftStatus').textContent(), scheduleDraftText);
+  assert.equal(s.schedules.enabled, false, 'A rejected save must not mutate persisted state');
+  scheduleError = '';
+  await page.locator('#saveSchedules').click();
+  await page.waitForFunction(() => state.schedules.enabled && state.schedules.entries[0].minute === 435);
+  assert.equal(scheduleCalls.length, 2);
+  assert.deepEqual(scheduleCalls[1].entries[0], { enabled: true, days: 17, minute: 435, power: true, favorite: 0 });
+  assert.deepEqual(scheduleCalls[1].entries[1], { enabled: true, days: 64, minute: 1380, power: false, favorite: -1 });
+  scheduleCalls[1].entries.slice(2).forEach(entry => assert.deepEqual(entry, { enabled: false, days: 0, minute: 0, power: false, favorite: -1 }));
+
+  // A delayed save acknowledges only the submitted snapshot, not newer edits.
+  automationDelay = 450;
+  await page.locator('#scheduleTime0').fill('07:20');
+  await page.locator('#saveSchedules').click();
+  assert(await page.locator('#scheduleTime0').isDisabled());
+  await page.locator('#scheduleTime0').evaluate(e => { e.value = '07:25'; e.dispatchEvent(new Event('input', { bubbles: true })); });
+  await page.waitForTimeout(750);
+  assert.equal(s.schedules.entries[0].minute, 440);
+  assert.equal(await page.locator('#scheduleTime0').inputValue(), '07:25');
+  automationDelay = 0;
+  // Reload/discard requires confirmation and does not write to the device.
+  let reloadPrompt = '';
+  page.once('dialog', async dialog => { reloadPrompt = dialog.message(); await dialog.dismiss(); });
+  await page.locator('#reloadSchedules').click();
+  assert(reloadPrompt.length > 0);
+  assert.equal(await page.locator('#scheduleTime0').inputValue(), '07:25');
+  const writesBeforeReload = scheduleCalls.length;
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#reloadSchedules').click();
+  assert.equal(await page.locator('#scheduleTime0').inputValue(), '07:20');
+  assert.equal(scheduleCalls.length, writesBeforeReload);
+
+  // Solar configuration uses degrees in the form and fixed-point E6 in storage.
+  assert.equal(await page.locator('#duskMinutes').getAttribute('type'), 'hidden');
+  assert(!(await page.locator('#duskMinutes').isVisible()));
+  assert(await page.locator('#dawnMinutes').isVisible());
+  await page.locator('#latitude').fill('10.123456');
+  await page.locator('#longitude').fill('106.654321');
+  await page.locator('#dawnEnabled').check();
+  await page.locator('#duskEnabled').check();
+  await page.locator('#dawnOffset').fill('-15');
+  await page.locator('#duskOffset').fill('20');
+  await page.locator('#dawnMinutes').fill('45');
+  await page.locator('#dawnBrightness').fill('42');
+  await page.locator('#duskBrightness').fill('28');
+  for (let day = 0; day < 7; day++) {
+    await page.locator('#dawnDay' + day).setChecked([0, 1, 2, 3, 4].includes(day));
+    await page.locator('#duskDay' + day).setChecked([5, 6].includes(day));
+  }
+  await page.locator('#dawnFavorite').selectOption('-1');
+  await page.locator('#duskFavorite').selectOption('-1');
+  assert(await page.locator('#dawnBrightnessRow').isVisible());
+  assert(await page.locator('#duskBrightnessRow').isVisible());
+  for (const id of ['dawnFavorite', 'duskFavorite']) {
+    const available = await page.locator('#' + id + ' option').evaluateAll(options => options.filter(o => !o.disabled).map(o => o.value));
+    assert(available.includes('-1') && available.includes('0'));
+    assert(!available.includes('1') && !available.includes('2'), 'Solar actions must gate empty favorites');
+  }
+  const solarDraft = await page.locator('#sunForm').evaluate(form => Array.from(form.querySelectorAll('input,select')).map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));
+  await page.waitForTimeout(750);
+  assert.deepEqual(await page.locator('#sunForm').evaluate(form => Array.from(form.querySelectorAll('input,select')).map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value])), solarDraft);
+  assert.equal(sunCalls.length, 0);
+  sunError = 'Không lưu được vị trí và bình minh. Hãy thử lại.';
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(() => document.getElementById('notice').textContent.includes('Không lưu được vị trí'));
+  assert.equal(sunCalls.length, 1);
+  assert.equal(await page.locator('#latitude').inputValue(), '10.123456');
+  assert.equal(await page.locator('#dawnMinutes').inputValue(), '45');
+  sunError = '';
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(() => state.sun.latitudeE6 === 10123456);
+  assert.equal(sunCalls.length, 2);
+  assert.equal(sunCalls[1].longitudeE6, 106654321);
+  assert.deepEqual(sunCalls[1].dawn, { enabled: true, days: 31, offset: -15, minutes: 45, favorite: -1, brightness: 42 });
+  assert.deepEqual(sunCalls[1].dusk, { enabled: true, days: 96, offset: 20, minutes: 30, favorite: -1, brightness: 28 });
+  await page.locator('#dawnFavorite').selectOption('0');
+  await page.locator('#duskFavorite').selectOption('0');
+  assert(!(await page.locator('#dawnBrightnessRow').isVisible()));
+  assert(!(await page.locator('#duskBrightnessRow').isVisible()));
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(() => state.sun.dawn.favorite === 0 && state.sun.dusk.favorite === 0);
+  assert.equal(sunCalls[2].dawn.brightness, 42, 'Choosing a favorite preserves the built-in warm brightness draft');
+  await page.locator('#dawnFavorite').selectOption('-1');
+  assert(await page.locator('#dawnBrightnessRow').isVisible());
+  assert.equal(await page.locator('#dawnBrightness').inputValue(), '42');
+
+  // Reject out-of-range/partial coordinates and malformed solar actions locally.
+  const solarCallsBeforeValidation = sunCalls.length;
+  for (const [id, value] of [['latitude', '89.000001'], ['latitude', '-89.000001'], ['latitude', ''], ['longitude', '180.000001'], ['longitude', '-180.000001']]) {
+    await page.locator('#latitude').fill('10.123456'); await page.locator('#longitude').fill('106.654321');
+    await page.locator('#' + id).fill(value); await page.locator('#saveSun').click();
+    assert.equal(sunCalls.length, solarCallsBeforeValidation, 'Coordinate rejected: ' + id + '=' + value);
+  }
+  await page.locator('#latitude').fill('10.123456'); await page.locator('#longitude').fill('106.654321');
+  for (const [id, value, valid] of [['dawnOffset', '121', '-15'], ['dawnMinutes', '0', '45'], ['dawnMinutes', '121', '45'], ['dawnBrightness', '0', '42']]) {
+    await page.locator('#' + id).fill(value); await page.locator('#saveSun').click();
+    assert.equal(sunCalls.length, solarCallsBeforeValidation, 'Solar value rejected: ' + id + '=' + value);
+    await page.locator('#' + id).fill(valid);
+  }
+  for (let day = 0; day < 7; day++) await page.locator('#dawnDay' + day).uncheck();
+  await page.locator('#saveSun').click(); assert.equal(sunCalls.length, solarCallsBeforeValidation);
+  for (let day = 0; day < 5; day++) await page.locator('#dawnDay' + day).check();
+  await page.locator('#dawnFavorite').evaluate(e => { e.value = '2'; e.dispatchEvent(new Event('change', { bubbles: true })); });
+  await page.locator('#saveSun').click(); assert.equal(sunCalls.length, solarCallsBeforeValidation);
+  await page.locator('#dawnFavorite').selectOption('-1');
+  // The inclusive coordinate limits are accepted and still produce integer E6.
+  await page.locator('#latitude').fill('-89'); await page.locator('#longitude').fill('180');
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(() => state.sun.latitudeE6 === -89000000 && state.sun.longitudeE6 === 180000000);
+  await page.locator('#latitude').fill('89'); await page.locator('#longitude').fill('-180');
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(() => state.sun.latitudeE6 === 89000000 && state.sun.longitudeE6 === -180000000);
+  await page.locator('#useHCM').click();
+  const hcmLatitude = +await page.locator('#latitude').inputValue(), hcmLongitude = +await page.locator('#longitude').inputValue();
+  assert(hcmLatitude > 10 && hcmLatitude < 11 && hcmLongitude > 106 && hcmLongitude < 107);
+  await page.locator('#saveSun').click();
+  await page.waitForFunction(({ lat, lon }) => state.sun.latitudeE6 === lat && state.sun.longitudeE6 === lon, { lat: Math.round(hcmLatitude * 1e6), lon: Math.round(hcmLongitude * 1e6) });
+  await page.locator('#longitude').fill('105.5');
+  page.once('dialog', dialog => dialog.dismiss()); await page.locator('#reloadSun').click();
+  assert.equal(await page.locator('#longitude').inputValue(), '105.5');
+  const solarWritesBeforeReload = sunCalls.length;
+  page.once('dialog', dialog => dialog.accept()); await page.locator('#reloadSun').click();
+  assert.equal(+await page.locator('#longitude').inputValue(), hcmLongitude);
+  assert.equal(sunCalls.length, solarWritesBeforeReload);
+
+  // WiFi loss after a valid NTP clock must not be confused with clock failure.
+  s.clock.online = false; s.wifiConnected = false; s.clock.localTime = '09:51:00'; s.revision++;
+  await page.waitForFunction(() => document.getElementById('clockTime').textContent.includes('09:51:00'));
+  assert(!(await page.locator('#saveSchedules').isDisabled()));
+  assert(!(await page.locator('#saveSun').isDisabled()));
+  assert(!(await page.locator('#clockStatus').textContent()).match(/chưa.*(?:giờ|đồng bộ)/i));
+  s.automation = { active: true, kind: 'dawn', brightness: 12.5, target: 42, remainingMs: 600000, error: '' }; s.revision++;
+  await page.waitForFunction(() => document.getElementById('automationStatus').textContent.includes('12.5%'));
+  assert((await page.locator('#automationStatus').textContent()).includes('42'));
+  s.automation = { active: false, kind: 'dawn', brightness: 0, target: 42, remainingMs: 0, error: 'Mục yêu thích đã bị xóa.' }; s.revision++;
+  await page.waitForFunction(() => document.getElementById('automationStatus').textContent.includes('Mục yêu thích đã bị xóa'));
+  s.clock.online = true; s.wifiConnected = true; s.automation.error = ''; s.revision++;
+
+  // Failed writes are uncertain: retain drafts and require an explicit retry,
+  // rather than replaying a schedule/solar POST when polling reconnects.
+  for (const section of [
+    { endpoint: 'schedules', field: 'scheduleTime0', value: '07:30', button: 'saveSchedules', calls: scheduleCalls, reload: 'reloadSchedules' },
+    { endpoint: 'sun', field: 'longitude', value: '106.2', button: 'saveSun', calls: sunCalls, reload: 'reloadSun' }
+  ]) {
+    await page.locator('#' + section.field).fill(section.value);
+    const count = section.calls.length;
+    automationAbort = section.endpoint;
+    await page.locator('#' + section.button).click();
+    await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Mất kết nối');
+    assert.equal(section.calls.length, count + 1);
+    assert.equal(await page.locator('#' + section.field).inputValue(), section.value);
+    assert(await page.locator('#' + section.button).isDisabled());
+    automationAbort = ''; offline = false;
+    await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
+    await page.waitForTimeout(750);
+    assert.equal(section.calls.length, count + 1, 'Reconnect must not replay ' + section.endpoint);
+    assert.equal(await page.locator('#' + section.field).inputValue(), section.value);
+    page.once('dialog', dialog => dialog.accept());
+    await page.locator('#' + section.reload).click();
+  }
+
   // Disconnect cancels an active scan and never replays scans, commands or network writes.
   await page.locator('#scanWiFi').click();
   offline = true;
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Mất kết nối');
   const commandCount = commands.length, networkCount = networkCalls.length, scansBefore = scanStarts;
+  const scheduleCount = scheduleCalls.length, solarCount = sunCalls.length;
   assert(await page.locator('#power').isDisabled());
+  assert(await page.locator('#saveSchedules').isDisabled());
+  assert(await page.locator('#saveSun').isDisabled());
   // Instructions stay available when the lamp cannot be reached.
   await page.locator('#openHelp').click();
   await page.waitForFunction(() => document.getElementById('helpCard').open);
@@ -339,6 +619,7 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   await page.waitForTimeout(1000);
   assert.equal(commands.length, commandCount); assert.equal(networkCalls.length, networkCount);
+  assert.equal(scheduleCalls.length, scheduleCount); assert.equal(sunCalls.length, solarCount);
   assert.equal(scanStarts, scansBefore); assert(!(await page.locator('#scanWiFi').isDisabled()));
 
   // A late save response must not erase text the user changed during that save.
@@ -362,7 +643,7 @@ const path = require('path');
   await page.screenshot({ path: path.join(shotDir, 'web-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   page.on('dialog', d => d.accept());
-  await page.locator('summary').nth(1).click();
+  await page.locator('details').filter({ has: page.locator('#otaForm') }).locator('summary').click();
   await page.locator('#firmware').setInputFiles({ name: 'firmware.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64) });
   // An OTA rejection must not leave a queued, unexecuted mode displayed as active.
   commandDelay = 400; otaDelay = 850; otaError = 'File cập nhật không hợp lệ.';
@@ -380,5 +661,5 @@ const path = require('path');
   assert(await page.locator('#scanWiFi').isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
   await browser.close();
-  console.log('PASS: 14 mode IDs/labels/descriptions/speed controls, tint preserves effects and queued interaction snapshots, offline accessible help/boot guidance, light/favorites/timer, OTA success/rejection with pending-mode cleanup, WiFi scanning/security/RSSI/hidden SSID, hostname/collision/clipboard, open-network retry/draft preservation/offline recovery, mobile/desktop layout, no JS errors');
+  console.log('PASS: weekly 8-slot schedules, HH:MM/day/favorite validation, solar E6/range/HCM/warm/favorite controls, draft preservation/error/discard/late-save races, clock sync and WiFi-loss status, offline no-replay; retained 14-mode/tint/help/light/favorites/timer/OTA/WiFi/hostname/clipboard/layout checks, no JS errors');
 })().catch(e => { console.error(e); process.exit(1); });
