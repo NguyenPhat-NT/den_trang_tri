@@ -5,6 +5,9 @@
 #include "Core.h"
 #include "NetworkPolicy.h"
 namespace Deco {
+// Schema 2 extends the supported mode IDs. Schema 1 remains readable; older
+// firmware detects schema 2 as future data instead of overwriting new presets.
+constexpr uint8_t LIGHT_SCHEMA_VERSION=2;
 inline uint32_t crc32(const uint8_t* p,size_t n){uint32_t c=0xffffffffu;while(n--){c^=*p++;for(int k=0;k<8;k++)c=(c>>1)^(0xedb88320u&(0u-(c&1)));}return ~c;}
 inline void put32(uint8_t* p,uint32_t n){for(int i=0;i<4;i++)p[i]=uint8_t(n>>(8*i));}
 inline uint32_t get32(const uint8_t* p){uint32_t n=0;for(int i=0;i<4;i++)n|=uint32_t(p[i])<<(8*i);return n;}
@@ -20,7 +23,8 @@ inline bool decodeSettings(const String& text,Settings& s){
  int sleep,cap;if(!lightFromJson(d["light"].as<JsonObjectConst>(),n.light)||!readInt(d["sleepBrightness"],1,100,sleep)||!readInt(d["cap"],Config::MIN_CAP_PERCENT,Config::MAX_CAP_PERCENT,cap))return false;
  n.sleepBrightness=sleep;n.cap=cap;JsonArrayConst a=d["favorites"].as<JsonArrayConst>();if(a.size()!=3)return false;
  for(int i=0;i<3;i++){if(!a[i]["valid"].is<bool>()||!lightFromJson(a[i]["light"].as<JsonObjectConst>(),n.favorites[i].light))return false;n.favorites[i].valid=a[i]["valid"].as<bool>();}
- if(!validSettings(n))return false;s=n;return true;
+ if(!validSettings(n))return false;
+ s=n;return true;
 }
 class Storage {
  Preferences prefs;bool opened=false;int slot=-1;uint32_t generation=0,lastChange=0,lastAttempt=0;bool tried=false;
@@ -28,11 +32,12 @@ class Storage {
  bool readBlob(const char* key,String& payload,uint32_t& gen,bool& future){
   size_t n=prefs.getBytesLength(key);if(n<16||n>2048)return false;uint8_t bytes[2048];if(prefs.getBytes(key,bytes,n)!=n)return false;
   if(get32(bytes)!=0x4f434544u||get32(bytes+8)!=n-16||get32(bytes+12)!=crc32(bytes+16,n-16))return false;
-  uint32_t meta=get32(bytes+4);uint8_t schema=uint8_t(meta);if(schema>1){future=true;return false;}if(schema!=1)return false;
+  uint32_t meta=get32(bytes+4);uint8_t schema=uint8_t(meta);if(schema>LIGHT_SCHEMA_VERSION){future=true;return false;}if(schema<1)return false;
   gen=meta>>8;payload=String(reinterpret_cast<const char*>(bytes+16),n-16);return true;
  }
  bool writeBlob(const char* key,const String& payload,uint32_t gen){
-  if(payload.length()>2032)return false;uint8_t bytes[2048];put32(bytes,0x4f434544u);put32(bytes+4,((gen&0xffffffu)<<8)|1);put32(bytes+8,payload.length());put32(bytes+12,crc32(reinterpret_cast<const uint8_t*>(payload.c_str()),payload.length()));memcpy(bytes+16,payload.c_str(),payload.length());
+  if(payload.length()>2032)return false;
+  uint8_t bytes[2048];put32(bytes,0x4f434544u);put32(bytes+4,((gen&0xffffffu)<<8)|LIGHT_SCHEMA_VERSION);put32(bytes+8,payload.length());put32(bytes+12,crc32(reinterpret_cast<const uint8_t*>(payload.c_str()),payload.length()));memcpy(bytes+16,payload.c_str(),payload.length());
   if(prefs.putBytes(key,bytes,payload.length()+16)!=payload.length()+16)return false;
   String check;uint32_t readGen=0;bool future=false;return readBlob(key,check,readGen,future)&&check==payload&&readGen==(gen&0xffffffu);
  }
@@ -50,7 +55,8 @@ class Storage {
  }
  void changed(const Settings& s,uint32_t now){dirty=encodeSettings(s)!=saved;if(dirty){lastChange=now;tried=false;} }
  bool saveNow(const Settings& s){
-  if(!dirty)return !blocked;if(!opened||blocked){error=blocked?"Không thể ghi schema chưa hỗ trợ":"NVS chưa sẵn sàng";return false;}
+  if(!dirty)return !blocked;
+  if(!opened||blocked){error=blocked?"Không thể ghi schema chưa hỗ trợ":"NVS chưa sẵn sàng";return false;}
   String text=encodeSettings(s);int next=slot==0?1:0;uint32_t gen=(generation+1)&0xffffffu;
   if(!writeBlob(next==0?"slot-a":"slot-b",text,gen)){error="Ghi hoặc kiểm tra NVS thất bại";return false;}
   saved=text;generation=gen;slot=next;dirty=false;hasSaved=true;error="";writes++;return true;

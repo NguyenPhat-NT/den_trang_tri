@@ -1,8 +1,149 @@
 #include "../DenDeco/Core.h"
 #include <cassert>
+#include <cstdlib>
 #include <iostream>
 #include <vector>
 using namespace Deco;
+static_assert(Sleep==0&&Solid==1&&SlowColor==2&&Candle==3&&Rainbow==4&&Rise==5,"Persisted mode IDs changed");
+static_assert(Breath==6&&Twinkle==7&&Aurora==8&&Ocean==9&&Forest==10&&Sunset==11&&Comet==12&&ColorWaves==13&&ModeCount==14,"New effect IDs changed");
+static_assert(int(Action::Color)==3&&int(Action::TimerCancel)==10&&int(Action::Tint)==11,"Action IDs changed");
+struct CapturedFrame {uint8_t pixels[Config::LED_COUNT][3]={};};
+static bool sameFrame(const CapturedFrame& a,const CapturedFrame& b){
+ for(int i=0;i<Config::LED_COUNT;i++)for(int ch=0;ch<3;ch++)if(a.pixels[i][ch]!=b.pixels[i][ch])return false;
+ return true;
+}
+static unsigned frameTotal(const CapturedFrame& frame){
+ unsigned total=0;for(auto& row:frame.pixels)for(auto value:row)total+=value;return total;
+}
+static bool hasSpatialVariation(const CapturedFrame& frame){
+ for(int i=1;i<Config::HEIGHT_COUNT;i++)for(int ch=0;ch<3;ch++)if(frame.pixels[i][ch]!=frame.pixels[0][ch])return true;
+ return false;
+}
+static CapturedFrame capture(const Settings& settings,uint32_t elapsed,uint32_t start=0){
+ Renderer renderer;Timer timer;CapturedFrame out;renderer.begin(settings,start);renderer.frame(settings,timer,start+elapsed,out.pixels);return out;
+}
+static void testNewEffectCommands(){
+ Controller controller;controller.apply({Action::Power,1},0);
+ for(int mode=0;mode<ModeCount;mode++)assert(controller.apply({Action::Mode,mode},1).accepted&&controller.settings.light.mode==mode);
+ Settings previous=controller.settings;
+ assert(!controller.apply({Action::Mode,ModeCount},2).accepted&&controller.settings==previous);
+ for(int mode=Breath;mode<ModeCount;mode++){
+  controller.apply({Action::Mode,mode},10);controller.apply({Action::Speed,73},11);controller.apply({Action::Brightness,64},12);
+  controller.settings.light.r=26;controller.settings.light.g=171;controller.settings.light.b=211;
+  Light saved=controller.settings.light;assert(validLight(saved));
+  assert(controller.apply({Action::FavoriteSave,mode%3},13).accepted);
+  controller.apply({Action::Color,0,1,2,3},14);controller.apply({Action::Speed,11},15);
+  assert(controller.settings.light.mode==Solid);
+  assert(controller.apply({Action::FavoriteApply,mode%3},16).accepted&&controller.settings.light==saved);
+ }
+ for(int mode=0;mode<ModeCount;mode++){
+  controller.apply({Action::Mode,mode},20);controller.apply({Action::TimerStart,30},21);
+  Settings before=controller.settings;uint32_t revision=controller.revision;
+  Result tint=controller.apply({Action::Tint,0,77,88,99},22);
+  if(mode==Solid||mode==Breath||mode==Twinkle||mode==Comet){
+   assert(tint.accepted&&tint.changed&&controller.settings.light.mode==mode&&!controller.timer.active);
+   assert(controller.settings.light.r==77&&controller.settings.light.g==88&&controller.settings.light.b==99);
+   assert(controller.settings.light.brightness==before.light.brightness&&controller.settings.light.speed==before.light.speed&&controller.settings.power==before.power);
+   controller.apply({Action::TimerStart,30},23);uint32_t unchangedRevision=controller.revision;
+   Result noop=controller.apply({Action::Tint,0,77,88,99},24);
+   assert(noop.accepted&&!noop.changed&&controller.timer.active&&controller.revision==unchangedRevision);
+   controller.apply({Action::Tint,0,99,88,77},25);
+  }else assert(!tint.accepted&&!tint.changed&&controller.settings==before&&controller.timer.active&&controller.revision==revision);
+ }
+ Light invalid;invalid.mode=ModeCount;assert(!validLight(invalid));
+}
+static void testNewEffectRendering(){
+ Settings settings;settings.power=true;settings.light.brightness=100;settings.light.r=settings.light.g=settings.light.b=255;
+ Timer noTimer;
+ // Every effect obeys the shared cap, power fade and timer envelope. The
+ // lowest allowed cap matters because rounding can exceed it without a clamp.
+ for(int mode=0;mode<ModeCount;mode++)for(int speed:{1,50,100})for(int cap:{3,30}){
+  settings.light.mode=mode;settings.light.speed=speed;settings.cap=cap;
+  Renderer renderer;CapturedFrame frame;renderer.begin(settings,0);
+  renderer.frame(settings,noTimer,0,frame.pixels);assert(frameTotal(frame)==0);
+  const int ceiling=cap*255/100;
+  for(uint32_t now=1000;now<18000;now+=97){
+   renderer.frame(settings,noTimer,now,frame.pixels);
+   for(auto& row:frame.pixels)for(auto value:row)assert(value<=ceiling);
+   if(mode>=Breath)for(int i=0;i<Config::HEIGHT_COUNT;i++)for(int ch=0;ch<3;ch++)assert(frame.pixels[i][ch]==frame.pixels[Config::LED_COUNT-1-i][ch]);
+  }
+  renderer.frame(settings,noTimer,18000,frame.pixels);CapturedFrame visible=frame;
+  settings.power=false;renderer.retarget(settings,18000);renderer.frame(settings,noTimer,18000,frame.pixels);assert(sameFrame(frame,visible));
+  renderer.frame(settings,noTimer,18000+Config::FADE_MS,frame.pixels);assert(frameTotal(frame)==0);
+  renderer.frame(settings,noTimer,25000,frame.pixels);assert(frameTotal(frame)==0);settings.power=true;
+  Timer timer;timer.begin(0,1);renderer.begin(settings,0);renderer.frame(settings,timer,30000,frame.pixels);
+  CapturedFrame full=capture(settings,30000);
+  for(int i=0;i<Config::LED_COUNT;i++)for(int ch=0;ch<3;ch++)assert(std::abs(int(frame.pixels[i][ch])*2-int(full.pixels[i][ch]))<=1);
+ }
+ settings.cap=30;
+ for(int mode=Breath;mode<ModeCount;mode++)for(int speed:{1,50,100}){
+  settings.light.mode=mode;settings.light.speed=speed;
+  CapturedFrame first=capture(settings,1000);bool temporal=false,spatial=false;
+  for(uint32_t now=1000;now<=31000;now+=613){
+   CapturedFrame frame=capture(settings,now);
+   assert(sameFrame(frame,capture(settings,now))); // Repeatability, no random state.
+   assert(sameFrame(frame,capture(settings,now,0xfffff100u))); // millis rollover.
+   temporal=temporal||!sameFrame(frame,first);spatial=spatial||hasSpatialVariation(frame);
+   if(mode==Breath)assert(!hasSpatialVariation(frame));
+  }
+  assert(temporal);assert(mode==Breath||spatial);
+  // Output after the fade is independent of skipped/intermediate frames.
+  Renderer continuous;continuous.begin(settings,0);CapturedFrame previous,current;
+  continuous.frame(settings,noTimer,1000,previous.pixels);
+  for(uint32_t now=1033;now<65000;now+=33){
+   continuous.frame(settings,noTimer,now,current.pixels);
+   assert(sameFrame(current,capture(settings,now)));
+   for(int i=0;i<Config::LED_COUNT;i++)for(int ch=0;ch<3;ch++)assert(std::abs(int(current.pixels[i][ch])-int(previous.pixels[i][ch]))<=10);
+   previous=current;
+  }
+  // Long-running lights retain millisecond motion instead of quantizing
+  // time to coarse float seconds after several weeks of uptime.
+  previous=capture(settings,3000000000u);
+  for(uint32_t now=3000000033u;now<3000003000u;now+=33){
+   current=capture(settings,now);
+   for(int i=0;i<Config::LED_COUNT;i++)for(int ch=0;ch<3;ch++)assert(std::abs(int(current.pixels[i][ch])-int(previous.pixels[i][ch]))<=10);
+   previous=current;
+  }
+  Settings dim=settings;dim.light.brightness=10;
+  assert(frameTotal(capture(dim,5100))<frameTotal(capture(settings,5100)));
+ }
+ // Speed must affect every new effect, and each must produce a distinct
+ // spatial/time signature rather than relabeling the same animation.
+ for(int mode=Breath;mode<ModeCount;mode++)for(int a:{1,50,100})for(int b:{1,50,100}){
+  if(a>=b)continue;
+  bool different=false;settings.light.mode=mode;
+  for(uint32_t now:{1000u,5100u,10700u,23000u}){
+   settings.light.speed=a;CapturedFrame slow=capture(settings,now);settings.light.speed=b;
+   different=different||!sameFrame(slow,capture(settings,now));
+  }
+  assert(different);
+ }
+ for(int speed:{1,50,100})for(int a=Breath;a<ModeCount;a++)for(int b=a+1;b<ModeCount;b++){
+  bool different=false;settings.light.speed=speed;
+  for(uint32_t now:{1000u,7000u,13000u}){
+   settings.light.mode=a;CapturedFrame one=capture(settings,now);settings.light.mode=b;
+   different=different||!sameFrame(one,capture(settings,now));
+  }
+  assert(different);
+ }
+ // Tint colors only the three promised effects. Fixed palettes remain
+ // unchanged when a remembered RGB selection is different.
+ settings.light.speed=50;
+ for(int mode=Breath;mode<ModeCount;mode++){
+  settings.light.mode=mode;settings.light.r=255;settings.light.g=0;settings.light.b=0;
+  CapturedFrame red=capture(settings,11000);
+  settings.light.r=0;settings.light.g=0;settings.light.b=255;CapturedFrame blue=capture(settings,11000);
+  if(mode==Breath||mode==Twinkle||mode==Comet){
+   assert(!sameFrame(red,blue));
+   for(int i=0;i<Config::LED_COUNT;i++){assert(red.pixels[i][1]==0&&red.pixels[i][2]==0);assert(blue.pixels[i][0]==0&&blue.pixels[i][1]==0);}
+  }else assert(sameFrame(red,blue));
+  settings.light.mode=Solid;settings.light.r=settings.light.g=settings.light.b=255;
+  Renderer transition;transition.begin(settings,0);CapturedFrame before,after;transition.frame(settings,noTimer,1000,before.pixels);
+  settings.light.mode=mode;transition.retarget(settings,1000);transition.frame(settings,noTimer,1000,after.pixels);
+  assert(sameFrame(before,after));transition.frame(settings,noTimer,1000+Config::FADE_MS,after.pixels);
+  assert(sameFrame(after,capture(settings,Config::FADE_MS)));
+ }
+}
 struct TouchFixture {
  Touch touch;bool raw[4]={};std::vector<TouchEvent> events;
  explicit TouchFixture(uint32_t boot=0){touch.begin(boot);scan(boot+Config::TOUCH_STARTUP_MS);}
@@ -101,6 +242,7 @@ int main(){
  events.clear();raw[0]=raw[1]=true;scan(5000);scan(5030);scan(8000);raw[0]=raw[1]=false;scan(8100);scan(8130);assert(events.empty());
  Touch bootHeld;raw[0]=true;bootHeld.begin(0);bootHeld.scan(raw,10,[&](TouchEvent e){events.push_back(e);});bootHeld.scan(raw,4000,[&](TouchEvent e){events.push_back(e);});raw[0]=false;bootHeld.scan(raw,5000,[&](TouchEvent e){events.push_back(e);});bootHeld.scan(raw,5030,[&](TouchEvent e){events.push_back(e);});assert(events.empty());
  testWiFiResetChord();
+ testNewEffectCommands();testNewEffectRendering();
  Renderer render;Settings s;s.power=true;s.light.mode=Solid;s.light.r=s.light.g=s.light.b=255;s.light.brightness=100;Timer noTimer;uint8_t frame[Config::LED_COUNT][3];render.begin(s,0);render.frame(s,noTimer,800,frame);assert(frame[0][0]==76);
  s.power=false;render.retarget(s,800);render.frame(s,noTimer,1600,frame);for(auto& row:frame)for(auto x:row)assert(x==0);
  s.power=true;s.light.mode=Rise;render.begin(s,0);for(uint32_t n=800;n<20000;n+=33){render.frame(s,noTimer,n,frame);for(int i=0;i<10;i++)for(int ch=0;ch<3;ch++)assert(frame[i][ch]==frame[19-i][ch]);}
@@ -108,5 +250,5 @@ int main(){
  // Cancelling a timer in its fade must start from the displayed brightness.
  s.light.mode=Solid;s.light.brightness=100;s.light.r=s.light.g=s.light.b=255;render.begin(s,0);t.begin(0,1);render.frame(s,t,30000,frame);int faded=frame[0][0];t.cancel();render.retarget(s,30000);render.frame(s,t,30000,frame);assert(frame[0][0]==faded);render.frame(s,t,30800,frame);assert(frame[0][0]==76);
  s.light.mode=Candle;render.begin(s,0);for(uint32_t n=800;n<60000;n+=33){render.frame(s,noTimer,n,frame);for(auto& row:frame)for(auto x:row)assert(x<=76);}
- std::cout<<"PASS: controller, sleep memory, timer rollover, touch/holds/multi-touch, WiFi reset chord, gamma, cap, fade and paired LED mapping\n";
+ std::cout<<"PASS: controller/favorites/tint, 14 effects/speed/determinism/continuity/pairing/cap/fades, sleep memory, timer rollover, touch/holds/multi-touch and WiFi reset chord\n";
 }

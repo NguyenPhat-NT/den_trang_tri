@@ -3,6 +3,43 @@
 #include <iostream>
 FakeNVS fakeNVS;
 using namespace Deco;
+static void putLightRecord(const char* key,const Settings& settings,uint8_t schema,uint32_t generation){
+ String text=encodeSettings(settings);auto& bytes=fakeNVS.data[std::string("deco-light/")+key];bytes.resize(text.length()+16);
+ put32(bytes.data(),0x4f434544u);put32(bytes.data()+4,((generation&0xffffffu)<<8)|schema);
+ put32(bytes.data()+8,text.length());put32(bytes.data()+12,crc32(reinterpret_cast<const uint8_t*>(text.c_str()),text.length()));
+ memcpy(bytes.data()+16,text.c_str(),text.length());
+}
+static void testLightUpgrade(){
+ // Records written by 1.1.0 must retain every field and every original mode ID.
+ for(uint8_t mode=0;mode<6;mode++){
+  fakeNVS=FakeNVS{};Settings legacy;legacy.power=true;legacy.light.mode=mode;
+  legacy.light.r=17;legacy.light.g=43;legacy.light.b=92;legacy.light.brightness=37;legacy.light.speed=68;
+  legacy.sleepBrightness=11;legacy.cap=22;
+  for(int i=0;i<3;i++){legacy.favorites[i].valid=true;legacy.favorites[i].light=legacy.light;legacy.favorites[i].light.mode=i*2;}
+  putLightRecord("slot-a",legacy,1,17);
+  Settings loaded;Storage upgrade;upgrade.begin(loaded);
+  assert(loaded==legacy&&upgrade.hasSaved&&!upgrade.dirty&&!upgrade.blocked&&upgrade.writes==0);
+  // New modes and favorites are saved with schema2, while the legacy slot
+  // stays intact. A torn write can still fall back to that legacy record.
+  loaded.light.mode=13;loaded.favorites[1].light.mode=12;loaded.favorites[2].light.mode=8;
+  upgrade.changed(loaded,100);assert(upgrade.saveNow(loaded));
+  assert(uint8_t(get32(fakeNVS.data["deco-light/slot-b"].data()+4))==2);
+  assert(uint8_t(get32(fakeNVS.data["deco-light/slot-a"].data()+4))==1);
+  Settings restored;Storage newReader;newReader.begin(restored);assert(restored==loaded&&!newReader.blocked);
+  auto& latest=fakeNVS.data["deco-light/slot-b"];latest.resize(latest.size()/2);
+  Settings recovered;Storage recovery;recovery.begin(recovered);assert(recovered==legacy);
+ }
+ // Mixed schema generations select the newest slot even across generation wrap.
+ fakeNVS=FakeNVS{};Settings old,newer;old.light.mode=5;newer.light.mode=9;
+ putLightRecord("slot-a",old,1,0xffffffu);putLightRecord("slot-b",newer,2,0);
+ Settings selected;Storage mixed;mixed.begin(selected);assert(selected==newer);
+ const auto original=fakeNVS.data["deco-light/slot-b"];
+ // A future schema protects both records from being overwritten by this build.
+ putLightRecord("slot-a",newer,3,1);Settings future;Storage protectedReader;protectedReader.begin(future);
+ assert(protectedReader.blocked);future.power=true;protectedReader.changed(future,100);
+ assert(!protectedReader.saveNow(future)&&fakeNVS.data["deco-light/slot-b"]==original);
+ fakeNVS=FakeNVS{};
+}
 static void putNetworkJson(const String& text){
  auto& bytes=fakeNVS.data["deco-network/config"];bytes.resize(text.length()+4);
  put32(bytes.data(),crc32(reinterpret_cast<const uint8_t*>(text.c_str()),text.length()));
@@ -90,8 +127,8 @@ int main(){
  // Return to the saved state cancels a pending write.
  Settings original=fallback;fallback.light.brightness=31;d.changed(fallback,60000);fallback=original;d.changed(fallback,61000);d.tick(fallback,90000);assert(!d.dirty&&d.writes==0);
  // Invalid schema does not overwrite future data.
- auto& bytes=fakeNVS.data["deco-light/slot-b"];assert(bytes.size()>16);bytes[4]=2;Settings future;Storage e;e.begin(future);assert(e.blocked&&!future.power);future.power=true;e.changed(future,0);assert(!e.saveNow(future));
+ auto& bytes=fakeNVS.data["deco-light/slot-b"];assert(bytes.size()>16);bytes[4]=LIGHT_SCHEMA_VERSION+1;Settings future;Storage e;e.begin(future);assert(e.blocked&&!future.power);future.power=true;e.changed(future,0);assert(!e.saveNow(future));
  fakeNVS=FakeNVS{};Settings invalid;String text=encodeSettings(invalid);Settings roundtrip;assert(decodeSettings(text,roundtrip)&&roundtrip==invalid);assert(!decodeSettings(String("{}"),roundtrip));
- testNetworkStorage();
- std::cout<<"PASS: delayed/debounced save, recovery, failed writes and retry, torn slot fallback, no-op save, future schema, network migration/hostname/CRC repair\n";
+ testLightUpgrade();testNetworkStorage();
+ std::cout<<"PASS: delayed save/recovery, legacy mode/settings migration, mixed light schemas/new favorites, torn writes, future protection, network migration/hostname/CRC repair\n";
 }

@@ -1,5 +1,5 @@
-/* Den Deco 1.1.0 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
- * Arduino ESP32 2.0.17, Adafruit NeoPixel 1.12.5, ArduinoJson 7.4.2.
+/* Den Deco 1.2.0 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
+ * Arduino ESP32 3.3.1, Adafruit NeoPixel 1.15.5, ArduinoJson 7.4.3.
  * Select an OTA partition scheme; initial installation uses USB.
  */
 #include <WiFi.h>
@@ -17,7 +17,7 @@
 #include "Storage.h"
 #include "WebUI.h"
 using namespace Deco;
-const char* VERSION="1.1.0";
+const char* VERSION="1.2.0";
 Controller lamp;
 Renderer renderer;
 Touch touch;
@@ -187,6 +187,7 @@ bool parseBody(JsonDocument& d){
 void stateDocument(JsonDocument& d){
  uint32_t now=millis();d["version"]=VERSION;d["name"]=network.name;d["token"]=sessionToken;d["revision"]=lamp.revision;d["power"]=lamp.settings.power;
  lightToJson(d["light"].to<JsonObject>(),lamp.settings.light);d["sleepBrightness"]=lamp.settings.sleepBrightness;d["cap"]=lamp.settings.cap;d["ledCount"]=Config::LED_COUNT;
+ d["modeCount"]=ModeCount;
  JsonArray a=d["favorites"].to<JsonArray>();for(auto& f:lamp.settings.favorites){JsonObject o=a.add<JsonObject>();o["valid"]=f.valid;lightToJson(o["light"].to<JsonObject>(),f.light);}
  d["timerActive"]=lamp.timer.active;d["remainingMs"]=lamp.timer.remaining(now);d["hasSaved"]=storage.hasSaved;d["savePending"]=storage.dirty;d["saveError"]=storage.error;d["saveBlocked"]=storage.blocked;d["writes"]=storage.writes;
  d["ssid"]=network.ssid;d["wifiOpen"]=network.ssid.length()>0&&network.password.length()==0;d["wifiConnected"]=homeOnline();d["ip"]=homeOnline()?WiFi.localIP().toString():String("");d["apActive"]=apRunning;d["apSSID"]=apName;d["hostname"]=hostname;
@@ -202,14 +203,14 @@ void handleCommand(){
  else if(type=="mode"){valid=readInt(d["value"],0,ModeCount-1,n);c=Command(Action::Mode,n);}
  else if(type=="speed"){valid=readInt(d["value"],1,100,n);c=Command(Action::Speed,n);}
  else if(type=="cap"){valid=readInt(d["value"],Config::MIN_CAP_PERCENT,Config::MAX_CAP_PERCENT,n);c=Command(Action::Cap,n);}
- else if(type=="color"){int r=0,g=0,b=0;valid=readInt(d["r"],0,255,r)&&readInt(d["g"],0,255,g)&&readInt(d["b"],0,255,b);c=Command(Action::Color,0,r,g,b);}
+ else if(type=="color"||type=="tint"){int r=0,g=0,b=0;valid=readInt(d["r"],0,255,r)&&readInt(d["g"],0,255,g)&&readInt(d["b"],0,255,b);c=Command(type=="tint"?Action::Tint:Action::Color,0,r,g,b);}
  else if(type=="sleep"){c=Command(Action::SleepNow);}
  else if(type=="favoriteSave"||type=="favoriteApply"){valid=readInt(d["value"],0,2,n);c=Command(type=="favoriteSave"?Action::FavoriteSave:Action::FavoriteApply,n);}
  else if(type=="timerStart"){valid=readInt(d["value"],1,180,n);c=Command(Action::TimerStart,n);}
  else if(type=="timerCancel"){c=Command(Action::TimerCancel);}
  else valid=false;
  if(!valid){fail(400,"Lệnh hoặc giá trị ngoài phạm vi");return;}
- Result r=execute(c,millis());if(!r.accepted){fail(409,"Bật đèn trước khi hẹn giờ; mục yêu thích cần được lưu trước");return;}getState();
+ Result r=execute(c,millis());if(!r.accepted){fail(409,type=="tint"?"Chế độ hiện tại dùng bảng màu riêng; chọn Một màu, Thở nhẹ, Lấp lánh hoặc Sao băng để đổi màu.":"Bật đèn trước khi hẹn giờ; mục yêu thích cần được lưu trước");return;}getState();
 }
 void handleNetwork(){
  JsonDocument d;if(!parseBody(d))return;

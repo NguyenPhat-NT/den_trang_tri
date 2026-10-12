@@ -1,6 +1,6 @@
-# Hướng dẫn Đèn Deco 1.1.0
+# Hướng dẫn Đèn Deco 1.2.0
 
-Ngày bàn giao: 10/10/2026. Dành cho Windows và Arduino IDE.
+Ngày bàn giao: 12/10/2026. Dành cho Windows và Arduino IDE.
 
 ## 1. Cấu hình
 
@@ -10,6 +10,7 @@ Ngày bàn giao: 10/10/2026. Dành cho Windows và Arduino IDE.
 - Nguồn USB 5 V–2 A. Vỏ và bố trí cơ khí do bạn thực hiện.
 - Web tiếng Việt nằm trong firmware. Quét/chọn WiFi nhà 2,4 GHz, AP dự phòng không mật khẩu và địa chỉ mặc định `http://den-deco.local` chỉnh được.
 - Hẹn giờ, ba mục yêu thích, lưu trạng thái và cập nhật OTA qua trình duyệt.
+- 14 chế độ: sáu chế độ cũ cùng tám hiệu ứng mới; mục **Hướng dẫn sử dụng** nằm ngay trên web.
 
 ## 2. Đấu nối
 
@@ -75,7 +76,7 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 7. Bấm Verify rồi Upload. Nếu không nhận COM, giữ BOOT, bấm/thả RESET rồi thả BOOT; chọn lại COM và nạp. Các bo có thể ghi nút là B/BOOT và R/RESET.
 8. Sau nạp, bấm RESET nếu cần. Mở Serial Monitor **115200 baud**. Lần đầu chưa có bản lưu, đèn ở trạng thái tắt.
 
-Mã nguồn đã biên dịch với Arduino CLI, core 3.3.1 và các phiên bản thư viện trên; file OTA 1.1.0 trong gói dùng bộ này. Profile PlatformIO trong repo cũng đã build với core 2.0.17, NeoPixel 1.12.5 và ArduinoJson 7.4.2. Bạn có thể giữ bộ 3.3.1 hiện tại, không cần đổi về 2.0.17. Chưa kiểm chứng trực tiếp thao tác Upload trên bo của bạn. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
+Bộ core/thư viện người dùng đang có là ESP32 3.3.1, NeoPixel 1.15.5 và ArduinoJson 7.4.3; giữ bộ này để biên dịch. Thông tin build và file OTA 1.2.0 ghi trong `BUILD_INFO.md`. Profile PlatformIO 2.0.17 là phương án build bổ sung; không cần đổi bộ Arduino IDE hiện tại về phiên bản đó. Người dùng đã lắp và dùng các bản trước; bản 1.2.0 mới chưa được thử trên bo. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
 
 ## 4. Kết nối web lần đầu
 
@@ -111,7 +112,9 @@ Các tổ hợp nhiều nút khác sẽ hủy phần thao tác tiếp theo và c
 
 Khi tắt, các thao tác riêng +/−/M được bỏ qua; tổ hợp +/− giữ 5 giây vẫn reset được WiFi. Giữ Nguồn vẫn bật chế độ ngủ. Nút tăng/giảm dừng ở 1 và 100, không tự tắt.
 
-Thứ tự M: Ngủ → Một màu → Chuyển màu chậm → Ánh nến → Cầu vồng chậm → Ánh sáng dâng lên → Ngủ.
+Thứ tự M: Ngủ → Một màu → Chuyển màu chậm → Ánh nến → Cầu vồng chậm → Ánh sáng dâng lên → Thở nhẹ → Lấp lánh → Cực quang → Biển xanh → Rừng xanh → Hoàng hôn → Sao băng → Sóng màu → Ngủ. Chạm M đi qua cả 14 chế độ; web cho chọn trực tiếp.
+
+Sáu mã chế độ cũ 0–5 được giữ nguyên; tám chế độ mới nối tiếp ở 6–13 để nâng cấp không đổi ý nghĩa cấu hình/mục yêu thích đã lưu.
 
 Màu ngủ là RGB (255,96,24). Lần đầu mức ngủ 5%; khi chỉnh sáng trong chế độ ngủ, đèn nhớ riêng mức này. Lần vào chế độ ngủ tiếp theo dùng mức đã nhớ. Sang chế độ khác giữ mức sáng hiện tại; không có bản nhớ riêng cho từng chế độ.
 
@@ -119,8 +122,30 @@ Màu ngủ là RGB (255,96,24). Lần đầu mức ngủ 5%; khi chỉnh sáng t
 
 Web và cảm ứng dùng cùng trạng thái. Chỉnh ở một nơi sẽ cập nhật những trình duyệt khác bằng polling 250 ms khi tab đang hoạt động. Hai lệnh gần nhau áp dụng theo thứ tự ESP xử lý.
 
+Trang có mục **Hướng dẫn sử dụng** ngay trên web để xem nhanh cách chạm/giữ, chọn chế độ và màu, chỉnh tốc độ, lưu mục yêu thích, hẹn giờ, kết nối và OTA.
+
+| Mã | Chế độ | Chỉnh tốc độ 1–100 | Khi chọn màu RGB |
+| --- | --- | --- | --- |
+| 0 | Ngủ | Không | Chuyển sang Một màu |
+| 1 | Một màu | Không | Giữ Một màu |
+| 2 | Chuyển màu chậm | Có | Chuyển sang Một màu |
+| 3 | Ánh nến | Không | Chuyển sang Một màu |
+| 4 | Cầu vồng chậm | Có | Chuyển sang Một màu |
+| 5 | Ánh sáng dâng lên | Có | Chuyển sang Một màu |
+| 6 | Thở nhẹ | Có | Đổi màu, giữ Thở nhẹ |
+| 7 | Lấp lánh | Có | Đổi màu, giữ Lấp lánh |
+| 8 | Cực quang | Có | Chuyển sang Một màu |
+| 9 | Biển xanh | Có | Chuyển sang Một màu |
+| 10 | Rừng xanh | Có | Chuyển sang Một màu |
+| 11 | Hoàng hôn | Có | Chuyển sang Một màu |
+| 12 | Sao băng | Có | Đổi màu, giữ Sao băng |
+| 13 | Sóng màu | Có | Chuyển sang Một màu |
+
+Thở nhẹ, Lấp lánh và Sao băng dùng màu RGB bạn chọn làm màu hiệu ứng. Cực quang, Biển xanh, Rừng xanh, Hoàng hôn và Sóng màu dùng bảng màu riêng. Cả tám hiệu ứng mới đều dùng thanh tốc độ; tăng giá trị làm hiệu ứng chạy nhanh hơn. Độ sáng chính và trần đầu ra vẫn áp dụng cho mọi chế độ.
+
 - Khi tắt, chỉnh sáng/màu/chế độ hoặc áp dụng mục yêu thích không tự bật. Nút Chế độ ngủ là hành động bật vào ngủ giống giữ Nguồn.
-- Chọn màu chuyển sang Một màu. Tốc độ 1–100 dùng cho Chuyển màu, Cầu vồng và Dâng lên.
+- Chọn RGB giữ chế độ ở Một màu, Thở nhẹ, Lấp lánh và Sao băng; ở các chế độ khác sẽ chuyển sang Một màu. Chọn lại hiệu ứng dùng bảng màu riêng để trở về hiệu ứng đó.
+- Tốc độ 1–100 dùng cho Chuyển màu, Cầu vồng, Dâng lên và cả tám hiệu ứng mới; không làm đổi chế độ hoặc màu.
 - Ba mục yêu thích lưu màu, chế độ, độ sáng và tốc độ; không lưu cờ bật/tắt hoặc hẹn giờ.
 - Hẹn giờ 1–180 phút, chỉ khi đang bật. Năm phút cuối giảm sáng; thời lượng ngắn hơn 5 phút sẽ giảm từ đầu.
 - Đổi thật độ sáng, màu, chế độ, tốc độ, trần hoặc áp dụng cấu hình khác sẽ hủy hẹn giờ. Sửa mục yêu thích, đổi tên/mạng hoặc gửi lại cùng giá trị không hủy.
@@ -138,21 +163,23 @@ Lưu: bật/tắt, RGB, chế độ, độ sáng, tốc độ, mức ngủ riên
 
 Rút nguồn trước 10 giây sẽ mất phần chỉnh chưa lưu. Hiệu ứng, chuyển sáng và hẹn giờ giảm sáng không ghi flash mỗi khung hình. Hết hẹn giờ tạo thay đổi tắt, rồi vẫn chờ 10 giây để lưu.
 
-Firmware có hai bản NVS, CRC và số thế hệ; boot chọn bản hợp lệ mới nhất. Khi ghi lỗi, giữ RAM và thử lại sau 5 giây. Khi gặp schema mới hơn, không tự ghi đè bằng firmware cũ. OTA cùng schema giữ dữ liệu; thay đổi firmware tương lai cần quy tắc migration nếu đổi schema, gamma hoặc cách hiểu thông số.
+Firmware có hai bản NVS, CRC và số thế hệ; boot chọn bản hợp lệ mới nhất. Khi ghi lỗi, giữ RAM và thử lại sau 5 giây. Khi gặp schema mới hơn, không tự ghi đè bằng firmware cũ.
+
+Bản 1.2.0 đọc dữ liệu ánh sáng schema 1 và 2, ghi schema 2 cho các lần lưu mới. Nâng cấp OTA từ 1.1.0 giữ cấu hình đèn và ba mục yêu thích vì sáu mã chế độ cũ không đổi; WiFi, tên và tên truy cập cũng được giữ. Nếu cần quay lại 1.1.0 sau khi dữ liệu đã lưu schema 2, dùng USB: firmware cũ có thể không đọc được schema mới và sẽ không ghi đè dữ liệu đó.
 
 ## 8. Cập nhật OTA
 
 Lần nạp đầu tiên vẫn qua USB để có firmware và bảng phân vùng OTA. Sau đó dùng web qua WiFi nhà hoặc AP:
 
 1. Trong Arduino IDE, giữ nguyên board 4 MB và Partition Scheme có OTA; chọn Sketch → Export Compiled Binary.
-2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.1.0-ota.bin`.
+2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.2.0-ota.bin`; có thể dùng để nâng cấp đèn đang chạy 1.1.0.
 3. Mở Cập nhật firmware qua WiFi trên web, chọn file, bấm Cập nhật firmware và xác nhận.
 4. Firmware lưu ngay các thay đổi đang chờ trước khi bắt đầu OTA, thay vì chờ 10 giây trong phiên bảo trì này. Khi lưu không thành công hoặc schema không hỗ trợ, OTA chưa bắt đầu.
 5. Giữ nguồn và kết nối ổn định. Ánh sáng giữ khung hình hiện tại; cảm ứng, hiệu ứng và xử lý hẹn giờ tạm dừng trong lúc upload; bộ đếm thời gian chạy vẫn trôi. Không dùng điều khiển bình thường cho tới khi hoàn tất.
 6. File được ghi vào phân vùng ứng dụng còn lại, kiểm tra kích thước, header/chip ESP32-C3, dấu ứng dụng và kiểm tra ảnh của thư viện Update. Khi hợp lệ, đèn trả thành công rồi khởi động lại sau khoảng 1,8 giây. Trang thử đồng bộ lại sau khoảng 7 giây.
 7. Đèn khôi phục trạng thái đã lưu, tên/tên truy cập và WiFi. Hẹn giờ không tiếp tục sau khởi động, giống quy tắc mất điện. Nếu đang OTA qua AP và đã lưu WiFi nhà hợp lệ, sau reboot đèn nối mạng nhà rồi tắt AP; chuyển điện thoại/PC về mạng nhà và mở địa chỉ `.local` hoặc IP.
 
-File của bản này nhỏ hơn giới hạn 1.310.720 byte mỗi phân vùng. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
+Giới hạn của phân vùng ứng dụng mặc định là 1.310.720 byte; kích thước file 1.2.0 được ghi trong `BUILD_INFO.md`. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
 
 Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, ứng dụng đang chạy vẫn được giữ. Nếu mất điện sau khi đã ghi firmware hợp lệ và chọn boot, lần bật sau có thể chạy firmware mới. Nếu firmware mới hợp lệ về định dạng nhưng có lỗi chạy, bản này chưa có rollback tự động sau boot; khôi phục bằng USB. Phiên OTA kiểm tra token và cùng origin; dùng trong mạng nội bộ, không mở cổng điều khiển ra Internet. Bản này chưa xác minh chữ ký số firmware.
 
@@ -166,7 +193,8 @@ Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, 
 6. Quét/chọn mạng, thử mật khẩu sai để kiểm tra AP dự phòng; dùng AP cập nhật lại thông tin. Khi nhập đúng và nhận IP, xác nhận AP tắt ngay. Thử tắt/bật router để kiểm tra mở AP sau 30 giây và tự tắt khi mạng khôi phục. Thử địa chỉ `.local`, IP và tên riêng nếu dùng nhiều đèn.
 7. Chạy trắng ở trần 30% và tải WiFi trong 30 phút; ghi điện áp, dòng và nhiệt. Dừng thử nếu có reset, sai màu hoặc nhiệt bất thường để xử lý đường nguồn trước khi dùng hàng ngày.
 8. Thử OTA với file gói bàn giao, rồi kiểm tra lại phiên bản và cấu hình.
+9. Với bản 1.2.0, chọn đủ tám hiệu ứng mới trên web và đi đủ 14 chế độ bằng M. Thử tốc độ 1/50/100, đổi RGB khi đang Thở nhẹ/Lấp lánh/Sao băng, kiểm tra các hiệu ứng khác chuyển sang Một màu khi chọn RGB, rồi lưu/khôi phục mục yêu thích. Mở Hướng dẫn sử dụng trên điện thoại để đọc ngay tại trang.
 
 Không thấy AP: đợi 30 giây nếu đã lưu mạng; nếu WiFi nhà đang kết nối, AP đã tắt đúng thiết kế. Muốn cấu hình lại từ cảm ứng, giữ đúng +/− 5 giây sau khi đã khởi động và thả hết nút. AP không yêu cầu mật khẩu. Trang AP mất kết nối ngay sau Lưu & kết nối: chuyển sang WiFi nhà và mở `.local` hoặc IP. Không mở được `.local`: kiểm tra cùng mạng, tên truy cập và dùng IP từ router/Serial. Không thấy mạng khi quét: xác nhận mạng 2,4 GHz, thử lại hoặc nhập SSID thủ công. Đèn chạm tự bật: kiểm tra module direct active high, dây và vùng cảm ứng/vỏ. OTA báo file sai: chọn đúng ứng dụng `.ino.bin`, không dùng bootloader/merged.
 
-Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. **Các kiểm tra điện, độ nhạy/chạm qua vỏ, WiFi/mDNS, truyền dữ liệu và OTA trên phần cứng đều đang chờ thực hiện** trên bộ đèn của bạn; xem `KIEM_THU.md` để ghi kết quả.
+Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. Người dùng đã lắp đèn và báo các bản trước chạy mượt. **Bản 1.2.0 mới chưa thử trên bo**; bảng nghiệm thu chưa có kết quả riêng cho từng ca đo điện, chạm qua vỏ, WiFi/mDNS và OTA. Sau nâng cấp, ưu tiên thử tám hiệu ứng mới, màu, tốc độ, hướng dẫn trên web và giữ cấu hình/mục yêu thích; ghi kết quả trong `KIEM_THU.md`.

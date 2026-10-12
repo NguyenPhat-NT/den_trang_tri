@@ -7,8 +7,13 @@ const path = require('path');
   const root = path.resolve(__dirname, '..');
   const source = fs.readFileSync(path.join(root, 'DenDeco/WebUI.h'), 'utf8');
   const html = source.split('R"DECOHTML(')[1].split(')DECOHTML"')[0];
+  const modeLabels = ['Ngủ', 'Một màu', 'Chuyển màu chậm', 'Ánh nến', 'Cầu vồng chậm', 'Ánh sáng dâng lên', 'Thở nhẹ', 'Lấp lánh', 'Cực quang', 'Biển xanh', 'Rừng xanh', 'Hoàng hôn', 'Sao băng', 'Sóng màu'];
+  const modeIds = ['Sleep', 'Solid', 'SlowColor', 'Candle', 'Rainbow', 'Rise', 'Breath', 'Twinkle', 'Aurora', 'Ocean', 'Forest', 'Sunset', 'Comet', 'ColorWaves'];
+  const core = fs.readFileSync(path.join(root, 'DenDeco/Core.h'), 'utf8');
+  modeIds.forEach((name, id) => assert(new RegExp('\\b' + name + '\\s*=\\s*' + id + '\\b').test(core), 'Firmware mode ID drift: ' + name));
+  assert(!/<(?:script|link)\b[^>]*(?:src|href)=["']https?:\/\//i.test(html), 'UI/help must be self-contained');
   const s = {
-    version: '1.1.0', name: 'Đèn Deco', token: 'test-session', revision: 0,
+    version: '1.2.0', name: 'Đèn Deco', token: 'test-session', revision: 0,
     power: false, light: { mode: 0, r: 255, g: 96, b: 24, brightness: 5, speed: 50 },
     sleepBrightness: 5, cap: 30, ledCount: 20,
     favorites: Array.from({ length: 3 }, () => ({ valid: false, light: { mode: 0, brightness: 5 } })),
@@ -22,6 +27,7 @@ const path = require('path');
   const commands = [], networkCalls = [], errors = [];
   let offline = false, otaCalls = 0, scanStarts = 0, scanGets = 0;
   let scanError = '', scanGetError = '', networkError = '', networkReconnect = false, networkDelay = 0;
+  let commandDelay = 0, otaError = '', otaDelay = 0;
   const networks = [
     { ssid: 'Home 2.4G', rssi: -35, channel: 6, secure: true, security: 'WPA2' },
     { ssid: 'Cafe mở', rssi: -60, channel: 1, secure: false, security: 'OPEN' },
@@ -53,11 +59,20 @@ const path = require('path');
     if (url.pathname === '/api/command') {
       assert.equal(req.headers()['x-deco-token'], s.token);
       const c = req.postDataJSON();
+      if (commandDelay) await new Promise(resolve => setTimeout(resolve, commandDelay));
       commands.push(c); s.revision++;
       if (c.type === 'power') s.power = c.value;
       if (c.type === 'brightness') s.light.brightness = c.value;
+      if (c.type === 'mode') { s.light.mode = c.value; if (c.value === 0) s.light.brightness = s.sleepBrightness; }
       if (c.type === 'color') Object.assign(s.light, { mode: 1, r: c.r, g: c.g, b: c.b });
+      if (c.type === 'tint') {
+        if (![1, 6, 7, 12].includes(s.light.mode)) return route.fulfill({ status: 400, json: { error: 'Chế độ này không cho đổi màu riêng.' } });
+        Object.assign(s.light, { r: c.r, g: c.g, b: c.b });
+      }
+      if (c.type === 'speed') s.light.speed = c.value;
+      if (c.type === 'sleep') { s.power = true; s.light.mode = 0; s.light.brightness = s.sleepBrightness; }
       if (c.type === 'favoriteSave') s.favorites[c.value] = { valid: true, light: { ...s.light } };
+      if (c.type === 'favoriteApply') s.light = { ...s.favorites[c.value].light };
       if (c.type === 'timerStart') { s.timerActive = true; s.remainingMs = c.value * 60000; }
       if (c.type === 'timerCancel') s.timerActive = false;
       return route.fulfill({ json: s });
@@ -97,6 +112,8 @@ const path = require('path');
     if (url.pathname === '/api/ota') {
       assert.equal(req.headers()['x-deco-token'], s.token);
       assert.equal(req.headers()['x-firmware-size'], '64'); otaCalls++;
+      if (otaDelay) await new Promise(resolve => setTimeout(resolve, otaDelay));
+      if (otaError) return route.fulfill({ status: 400, json: { error: otaError } });
       return route.fulfill({ json: { ok: true, message: 'Cập nhật thành công; đèn đang khởi động lại' } });
     }
     return route.fulfill({ status: 404, json: { error: 'Unknown' } });
@@ -106,6 +123,21 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   assert.equal(await page.locator('#brightnessText').textContent(), '5');
   assert(await page.locator('#startTimer').isDisabled());
+  assert((await page.locator('#footer').textContent()).includes('firmware 1.2.0'));
+  assert.deepEqual(await page.locator('#mode option').allTextContents(), modeLabels);
+  assert.deepEqual(await page.locator('#mode option').evaluateAll(options => options.map(option => +option.value)), Array.from({ length: 14 }, (_, i) => i));
+  assert.deepEqual(await page.locator('#effectGuide li strong').allTextContents(), modeLabels);
+  assert.equal(await page.locator('#helpCard').evaluate(e => e.open), false);
+  await page.locator('#openHelp').focus(); await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.getElementById('helpCard').open);
+  assert.equal(await page.locator('#openHelp').getAttribute('aria-expanded'), 'true');
+  assert.equal(await page.evaluate(() => document.activeElement.id), 'helpSummary');
+  const guideText = await page.locator('#helpCard').textContent();
+  for (const required of ['5 điểm phần trăm', '0,6 giây', '0,05 giây', '2 giây', '30 phút', '1–180 phút', '10 giây', '30 giây', '5 giây', 'http://den-deco.local', 'http://192.168.4.1', 'khôi phục trạng thái bật/tắt', 'Reset chỉ xóa mạng WiFi', 'Cập nhật thành công giữ cấu hình']) assert(guideText.includes(required), 'Help missing: ' + required);
+  assert(!guideText.includes('đèn bắt đầu ở trạng thái tắt'), 'Help must match saved power restoration');
+  for (const forbidden of ['GPIO', 'API', 'NVS', 'Serial Monitor', 'unit test']) assert(!guideText.includes(forbidden), 'Implementation detail leaked into product help: ' + forbidden);
+  await page.locator('#helpSummary').click();
+  await page.waitForFunction(() => !document.getElementById('helpCard').open);
   await page.locator('#power').click();
   await page.waitForFunction(() => document.getElementById('power').textContent === 'Tắt đèn');
   await page.locator('#brightness').evaluate(e => {
@@ -120,6 +152,54 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('remaining').textContent.includes('15:00'));
   await page.locator('#cancelTimer').click();
   await page.waitForFunction(() => document.getElementById('remaining').textContent === 'Chưa hẹn giờ');
+
+  // Exercise all 14 IDs through the API, their descriptions, and mode-specific controls.
+  for (let mode = 0; mode < 14; mode++) {
+    await page.locator('#mode').selectOption(String(mode));
+    await page.waitForFunction(expected => state.light.mode === expected, mode);
+    const description = await page.locator('#effectGuide li p').nth(mode).textContent();
+    assert(description.length > 20); assert.equal(await page.locator('#modeHelp').textContent(), description);
+    assert.equal(await page.locator('#speedRow').isVisible(), ![0, 1, 3].includes(mode));
+    const tint = [6, 7, 12].includes(mode);
+    if (tint) {
+      assert((await page.locator('#colorLabel').textContent()).includes(modeLabels[mode]));
+      assert((await page.locator('#colorHint').textContent()).includes('vẫn giữ hiệu ứng'));
+      const colorByMode = { 6: ['#986dff', 152, 109, 255], 7: ['#ff6991', 255, 105, 145], 12: ['#61ddac', 97, 221, 172] };
+      const chosen = colorByMode[mode];
+      await page.locator('[data-color="' + chosen[0] + '"]').click();
+      await page.waitForFunction(expected => state.light.r === expected[1] && state.light.g === expected[2] && state.light.b === expected[3], chosen);
+      assert.equal(commands.at(-1).type, 'tint'); assert.equal(s.light.mode, mode);
+    } else if (mode !== 1) assert((await page.locator('#colorHint').textContent()).includes('chuyển sang Một màu'));
+  }
+  await page.locator('#speed').evaluate(e => { e.value = '72'; e.dispatchEvent(new Event('change')); });
+  await page.waitForFunction(() => state.light.speed === 72); assert.equal(s.light.mode, 13);
+  // Fixed-palette color selection intentionally switches to Solid.
+  await page.locator('[data-color="#529bff"]').click();
+  await page.waitForFunction(() => state.light.mode === 1);
+  assert.equal(commands.at(-1).type, 'color');
+
+  // A mode response can be delayed while the user immediately chooses a color.
+  commandDelay = 400;
+  let queueStart = commands.length;
+  await page.locator('#mode').selectOption('6');
+  await page.locator('[data-color="#61ddac"]').click();
+  await page.waitForFunction(() => state.light.mode === 6 && state.light.r === 97 && state.light.g === 221);
+  assert.deepEqual(commands.slice(queueStart).map(c => c.type), ['mode', 'tint']);
+  assert.equal(s.light.mode, 6);
+  queueStart = commands.length;
+  await page.locator('#mode').selectOption('8');
+  await page.locator('#color').evaluate(e => { e.value = '#ff6991'; e.dispatchEvent(new Event('change')); });
+  await page.waitForFunction(() => state.light.mode === 1 && state.light.g === 105);
+  assert.deepEqual(commands.slice(queueStart).map(c => c.type), ['mode', 'color']);
+  await page.locator('#mode').selectOption('12');
+  await page.waitForFunction(() => state.light.mode === 12);
+  queueStart = commands.length;
+  await page.locator('[data-color="#ffc078"]').click();
+  await page.locator('#mode').selectOption('9');
+  await page.waitForFunction(() => state.light.mode === 9);
+  assert.deepEqual(commands.slice(queueStart).map(c => c.type), ['tint', 'mode']);
+  commandDelay = 0;
+  await page.locator('#mode').selectOption('1'); await page.waitForFunction(() => state.light.mode === 1);
 
   await page.locator('summary').nth(0).click();
   assert.equal(await page.locator('#localAddress').inputValue(), 'http://den-deco.local');
@@ -247,6 +327,10 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Mất kết nối');
   const commandCount = commands.length, networkCount = networkCalls.length, scansBefore = scanStarts;
   assert(await page.locator('#power').isDisabled());
+  // Instructions stay available when the lamp cannot be reached.
+  await page.locator('#openHelp').click();
+  await page.waitForFunction(() => document.getElementById('helpCard').open);
+  await page.locator('#helpSummary').click();
   offline = false;
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   await page.waitForTimeout(1000);
@@ -276,11 +360,21 @@ const path = require('path');
   page.on('dialog', d => d.accept());
   await page.locator('summary').nth(1).click();
   await page.locator('#firmware').setInputFiles({ name: 'firmware.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64) });
+  // An OTA rejection must not leave a queued, unexecuted mode displayed as active.
+  commandDelay = 400; otaDelay = 850; otaError = 'File cập nhật không hợp lệ.';
+  queueStart = commands.length;
+  await page.locator('#mode').selectOption('6');
+  await page.locator('#mode').selectOption('7');
+  await page.locator('#uploadFirmware').click();
+  await page.waitForFunction(() => document.getElementById('otaStatus').textContent.includes('không hợp lệ'));
+  await page.waitForFunction(() => state.light.mode === 6 && document.getElementById('mode').value === '6');
+  assert.deepEqual(commands.slice(queueStart).map(c => [c.type, c.value]), [['mode', 6]]);
+  commandDelay = 0; otaDelay = 0; otaError = '';
   await page.locator('#uploadFirmware').click();
   await page.waitForFunction(() => document.getElementById('otaStatus').textContent.includes('thành công'));
-  assert.equal(otaCalls, 1);
+  assert.equal(otaCalls, 2);
   assert(await page.locator('#scanWiFi').isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
   await browser.close();
-  console.log('PASS: light/favorites/timer/OTA, asynchronous scan/select/security/RSSI, hidden SSID, hostname validation/collision/copy fallback, WiFi failure/AP status, draft preservation, open-network retry, offline recovery without replay, mobile/desktop layout, no JS errors');
+  console.log('PASS: 14 mode IDs/labels/descriptions/speed controls, tint preserves effects and queued interaction snapshots, offline accessible help/boot guidance, light/favorites/timer, OTA success/rejection with pending-mode cleanup, WiFi scanning/security/RSSI/hidden SSID, hostname/collision/clipboard, open-network retry/draft preservation/offline recovery, mobile/desktop layout, no JS errors');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -3,7 +3,10 @@
 #include <math.h>
 #include <stdint.h>
 namespace Deco {
-enum Mode : uint8_t { Sleep=0, Solid, SlowColor, Candle, Rainbow, Rise, ModeCount };
+// IDs 0..5 are persisted by previous firmware and must remain unchanged.
+enum Mode : uint8_t { Sleep=0, Solid=1, SlowColor=2, Candle=3, Rainbow=4, Rise=5,
+ Breath=6, Twinkle=7, Aurora=8, Ocean=9, Forest=10, Sunset=11, Comet=12, ColorWaves=13, ModeCount=14 };
+inline bool supportsTint(uint8_t mode){return mode==Solid||mode==Breath||mode==Twinkle||mode==Comet;}
 struct Light {
  uint8_t mode=Sleep, r=255,g=96,b=24,brightness=5,speed=50;
  bool operator==(const Light& b) const {return mode==b.mode&&r==b.r&&g==b.g&&this->b==b.b&&brightness==b.brightness&&speed==b.speed;}
@@ -33,7 +36,7 @@ struct Timer {
  uint32_t remaining(uint32_t now)const {if(!active)return 0;uint32_t dt=now-start;return dt>=duration?0:duration-dt;}
  float envelope(uint32_t now)const {if(!active)return 1;uint32_t tail=duration<300000u?duration:300000u;uint32_t left=remaining(now);return left>=tail?1:float(left)/tail;}
 };
-enum class Action {Power,Brightness,Mode,Color,Speed,SleepNow,Cap,FavoriteSave,FavoriteApply,TimerStart,TimerCancel};
+enum class Action {Power,Brightness,Mode,Color,Speed,SleepNow,Cap,FavoriteSave,FavoriteApply,TimerStart,TimerCancel,Tint};
 struct Command {Action action; int value;uint8_t r,g,b; Command(Action a,int v=0,uint8_t red=0,uint8_t green=0,uint8_t blue=0):action(a),value(v),r(red),g(green),b(blue){} };
 struct Result {bool accepted,changed,feedback;Result(bool a=true,bool c=false,bool f=false):accepted(a),changed(c),feedback(f){} };
 class Controller {
@@ -47,6 +50,7 @@ class Controller {
    case Action::Brightness: if(c.value<1||c.value>100)return {false,false,false};settings.light.brightness=c.value;if(settings.light.mode==Sleep)settings.sleepBrightness=c.value;break;
    case Action::Mode: if(c.value<0||c.value>=ModeCount)return {false,false,false};if(settings.light.mode!=c.value){settings.light.mode=c.value;if(c.value==Sleep)settings.light.brightness=settings.sleepBrightness;}break;
    case Action::Color: settings.light.mode=Solid;settings.light.r=c.r;settings.light.g=c.g;settings.light.b=c.b;break;
+   case Action::Tint: if(!supportsTint(settings.light.mode))return {false,false,false};settings.light.r=c.r;settings.light.g=c.g;settings.light.b=c.b;break;
    case Action::Speed: if(c.value<1||c.value>100)return {false,false,false};settings.light.speed=c.value;break;
    case Action::SleepNow: settings.power=true;settings.light.mode=Sleep;settings.light.brightness=settings.sleepBrightness;break;
    case Action::Cap: if(c.value<Config::MIN_CAP_PERCENT||c.value>Config::MAX_CAP_PERCENT)return {false,false,false};settings.cap=c.value;break;
@@ -125,12 +129,19 @@ class Touch {
 };
 struct Color {float r,g,b;Color(float red=0,float green=0,float blue=0):r(red),g(green),b(blue){} };
 inline Color hsv(float h){h=h-floorf(h);float x=h*6;int i=int(x);float f=x-i;switch(i){case 0:return {1,f,0};case 1:return {1-f,1,0};case 2:return {0,1,f};case 3:return {0,1-f,1};case 4:return {f,0,1};default:return {1,0,1-f};}}
+inline Color colorMix(const Color& a,const Color& b,float amount){return {a.r+(b.r-a.r)*amount,a.g+(b.g-a.g)*amount,a.b+(b.b-a.b)*amount};}
+inline Color colorGain(const Color& color,float amount){return {color.r*amount,color.g*amount,color.b*amount};}
+inline float wave(float cycles){return .5f+.5f*sinf(cycles*6.28318531f);}
+inline float cyclePhase(uint32_t elapsed,float seconds){uint32_t period=uint32_t(seconds*1000.0f+.5f);return float(elapsed%period)/period;}
 class Renderer {
  Color from[Config::LED_COUNT],current[Config::LED_COUNT];Light target;
  float pFrom=5,pCurrent=5,pTarget=5,gateFrom=0,gateCurrent=0,gateTarget=0,lastTimerEnvelope=1;
  uint32_t transitionAt=0,phaseAt=0,feedbackAt=0;bool feedbackActive=false;
  Color effect(const Light& l,uint16_t i,uint32_t now)const{
-  float t=float(uint32_t(now-phaseAt))/1000.0f;float speed=(l.speed-1)/99.0f;
+  uint32_t elapsed=now-phaseAt;float t=float(elapsed)/1000.0f;float speed=(l.speed-1)/99.0f;
+  uint16_t height=i<Config::HEIGHT_COUNT?i:Config::LED_COUNT-1-i;
+  float z=Config::HEIGHT_COUNT>1?float(height)/(Config::HEIGHT_COUNT-1):0;
+  Color tint(l.r/255.0f,l.g/255.0f,l.b/255.0f);
   switch(l.mode){
    case Sleep:return {Config::SLEEP_R/255.0f,Config::SLEEP_G/255.0f,Config::SLEEP_B/255.0f};
    case Solid:return {l.r/255.0f,l.g/255.0f,l.b/255.0f};
@@ -138,6 +149,59 @@ class Renderer {
    case Candle:{float f=.9f+.045f*sinf(t*4.3f)+.035f*sinf(t*7.7f+float(i)*.23f)+.02f*sinf(t*13.1f);return {f,.37647f*f,.09412f*f};}
    case Rainbow:return hsv(float(i)/Config::LED_COUNT+t/(120.0f-115.0f*speed));
    case Rise:{uint16_t h=i<Config::HEIGHT_COUNT?i:Config::LED_COUNT-1-i;float pos=fmodf(t/(8.0f-7.0f*speed),1.0f)*(Config::HEIGHT_COUNT+3)-2.0f;float f=clamp01(1-fabsf(h-pos)/2.0f);return {f,.37647f*f,.09412f*f};}
+   case Breath:{
+    float phase=cyclePhase(elapsed,16.0f-12.0f*speed);
+    float pulse=.5f-.5f*cosf(phase*6.28318531f);
+    return colorGain(tint,.16f+.84f*pulse);
+   }
+   case Twinkle:{
+    // Fixed per-height phases make the sparkle repeatable without random
+    // state. Wide overlapping blooms avoid abrupt on/off flashing.
+    float phase=cyclePhase(elapsed,18.0f-13.0f*speed);
+    float salt=float((height*73u+19u)%101u)/101.0f;
+    float first=wave(phase+salt),second=wave(phase*2.0f+salt*.63f+.31f);
+    first*=first;first*=first;second*=second;second*=second;
+    return colorGain(tint,.20f+.55f*first+.25f*second);
+   }
+   case Aurora:{
+    float phase=cyclePhase(elapsed,45.0f-35.0f*speed);
+    Color ribbons=colorMix({.02f,.85f,.38f},{.38f,.04f,.88f},wave(z*.85f-phase));
+    ribbons=colorMix(ribbons,{.08f,.55f,.85f},.40f*wave(z*1.6f+phase*2.0f+.2f));
+    return colorGain(ribbons,.30f+.70f*wave(z*.65f-phase+.15f));
+   }
+   case Ocean:{
+    float phase=cyclePhase(elapsed,30.0f-23.0f*speed);
+    float swell=wave(z*1.25f-phase),foam=wave(z*2.0f-phase*2.0f+.18f);
+    Color sea=colorMix({.01f,.04f,.30f},{.02f,.62f,.80f},swell);
+    sea=colorMix(sea,{.30f,.72f,.92f},.28f*foam*foam);
+    return colorGain(sea,.55f+.45f*swell);
+   }
+   case Forest:{
+    float phase=cyclePhase(elapsed,50.0f-38.0f*speed);
+    Color leaves=colorMix({.02f,.30f,.06f},{.30f,.65f,.04f},wave(z-phase));
+    float sun=wave(z*1.75f-phase*2.0f+.2f);sun*=sun;
+    leaves=colorMix(leaves,{.65f,.42f,.06f},.30f*sun);
+    return colorGain(leaves,.55f+.45f*wave(z-phase+.3f));
+   }
+   case Sunset:{
+    float phase=cyclePhase(elapsed,60.0f-46.0f*speed);
+    Color sky=colorMix({1.0f,.38f,.04f},{.90f,.08f,.24f},clamp01(z*.70f+.30f*wave(phase)));
+    sky=colorMix(sky,{.15f,.025f,.40f},z*z*(.20f+.40f*wave(phase+.2f)));
+    return colorGain(sky,.70f+.30f*wave(z-phase));
+   }
+   case Comet:{
+    float phase=cyclePhase(elapsed,24.0f-18.0f*speed);
+    // The head travels beyond both ends before looping; its soft tail is
+    // nearly dark there, keeping the restart gentle on a short LED strip.
+    float head=phase*(Config::HEIGHT_COUNT+12.0f)-6.0f,d=head-height;
+    float glow=expf(-d*d/1.6f),tail=d>=0?expf(-d/2.0f):expf(d*2.5f);
+    return colorGain(tint,.02f+.98f*(.85f*glow+.15f*tail));
+   }
+   case ColorWaves:{
+    float phase=cyclePhase(elapsed,32.0f-24.0f*speed);
+    Color colors=colorMix(hsv(z-phase),{.10f,.12f,.18f},.15f);
+    return colorGain(colors,.40f+.60f*wave(z*1.5f-phase));
+   }
    default:return {};
   }
  }
