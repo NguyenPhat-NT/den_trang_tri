@@ -1,4 +1,4 @@
-/* Den Deco 1.2.0 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
+/* Den Deco 1.2.1 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
  * Arduino ESP32 3.3.1, Adafruit NeoPixel 1.15.5, ArduinoJson 7.4.3.
  * Select an OTA partition scheme; initial installation uses USB.
  */
@@ -17,7 +17,7 @@
 #include "Storage.h"
 #include "WebUI.h"
 using namespace Deco;
-const char* VERSION="1.2.0";
+const char* VERSION="1.2.1";
 Controller lamp;
 Renderer renderer;
 Touch touch;
@@ -324,7 +324,7 @@ void loop(){
   now=millis(); // Touch callbacks may start a timer/reset at a newer timestamp.
   Result r=lamp.tick(now);if(r.changed){storage.changed(lamp.settings,now);renderer.retarget(lamp.settings,now);}
   storage.tick(lamp.settings,now);
-  if(uint32_t(now-lastFrame)>=33){lastFrame=now;renderFrame(now);}
+  if(uint32_t(now-lastFrame)>=Config::FRAME_MS){lastFrame=now;renderFrame(now);}
   networkTick(now);
  }
  server.handleClient();delay(1);

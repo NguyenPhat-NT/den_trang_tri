@@ -13,7 +13,7 @@ const path = require('path');
   modeIds.forEach((name, id) => assert(new RegExp('\\b' + name + '\\s*=\\s*' + id + '\\b').test(core), 'Firmware mode ID drift: ' + name));
   assert(!/<(?:script|link)\b[^>]*(?:src|href)=["']https?:\/\//i.test(html), 'UI/help must be self-contained');
   const s = {
-    version: '1.2.0', name: 'Đèn Deco', token: 'test-session', revision: 0,
+    version: '1.2.1', name: 'Đèn Deco', token: 'test-session', revision: 0,
     power: false, light: { mode: 0, r: 255, g: 96, b: 24, brightness: 5, speed: 50 },
     sleepBrightness: 5, cap: 30, ledCount: 20,
     favorites: Array.from({ length: 3 }, () => ({ valid: false, light: { mode: 0, brightness: 5 } })),
@@ -123,10 +123,13 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   assert.equal(await page.locator('#brightnessText').textContent(), '5');
   assert(await page.locator('#startTimer').isDisabled());
-  assert((await page.locator('#footer').textContent()).includes('firmware 1.2.0'));
+  assert((await page.locator('#footer').textContent()).includes('firmware 1.2.1'));
   assert.deepEqual(await page.locator('#mode option').allTextContents(), modeLabels);
   assert.deepEqual(await page.locator('#mode option').evaluateAll(options => options.map(option => +option.value)), Array.from({ length: 14 }, (_, i) => i));
   assert.deepEqual(await page.locator('#effectGuide li strong').allTextContents(), modeLabels);
+  const twinkleDescription = await page.locator('#effectGuide li p').nth(7).textContent();
+  assert(twinkleDescription.includes('cụm sáng') && twinkleDescription.includes('tan dần trên nền tối'));
+  assert(!twinkleDescription.includes('nền sáng dịu'));
   assert.equal(await page.locator('#helpCard').evaluate(e => e.open), false);
   await page.locator('#openHelp').focus(); await page.keyboard.press('Enter');
   await page.waitForFunction(() => document.getElementById('helpCard').open);
@@ -135,6 +138,7 @@ const path = require('path');
   const guideText = await page.locator('#helpCard').textContent();
   for (const required of ['5 điểm phần trăm', '0,6 giây', '0,05 giây', '2 giây', '30 phút', '1–180 phút', '10 giây', '30 giây', '5 giây', 'http://den-deco.local', 'http://192.168.4.1', 'khôi phục trạng thái bật/tắt', 'Reset chỉ xóa mạng WiFi', 'Cập nhật thành công giữ cấu hình']) assert(guideText.includes(required), 'Help missing: ' + required);
   assert(!guideText.includes('đèn bắt đầu ở trạng thái tắt'), 'Help must match saved power restoration');
+  assert(guideText.includes('Nếu vỏ làm hiệu ứng nhạt') && guideText.includes('tăng độ sáng vừa và giảm tốc độ') && guideText.includes('chỉnh theo phòng và vỏ'), 'Help adapts brightness/speed advice to the lamp enclosure');
   for (const forbidden of ['GPIO', 'API', 'NVS', 'Serial Monitor', 'unit test']) assert(!guideText.includes(forbidden), 'Implementation detail leaked into product help: ' + forbidden);
   await page.locator('#helpSummary').click();
   await page.waitForFunction(() => !document.getElementById('helpCard').open);

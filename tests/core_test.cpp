@@ -15,6 +15,9 @@ static bool sameFrame(const CapturedFrame& a,const CapturedFrame& b){
 static unsigned frameTotal(const CapturedFrame& frame){
  unsigned total=0;for(auto& row:frame.pixels)for(auto value:row)total+=value;return total;
 }
+static unsigned channelTotal(const CapturedFrame& frame,int channel){
+ unsigned total=0;for(auto& row:frame.pixels)total+=row[channel];return total;
+}
 static bool hasSpatialVariation(const CapturedFrame& frame){
  for(int i=1;i<Config::HEIGHT_COUNT;i++)for(int ch=0;ch<3;ch++)if(frame.pixels[i][ch]!=frame.pixels[0][ch])return true;
  return false;
@@ -73,6 +76,8 @@ static void testNewEffectRendering(){
   renderer.frame(settings,noTimer,25000,frame.pixels);assert(frameTotal(frame)==0);settings.power=true;
   Timer timer;timer.begin(0,1);renderer.begin(settings,0);renderer.frame(settings,timer,30000,frame.pixels);
   CapturedFrame full=capture(settings,30000);
+  // The timer envelope scales the actual capped peak before either static
+  // or spatial rounding, keeping half-intensity error within one code.
   for(int i=0;i<Config::LED_COUNT;i++)for(int ch=0;ch<3;ch++)assert(std::abs(int(frame.pixels[i][ch])*2-int(full.pixels[i][ch]))<=1);
  }
  settings.cap=30;
@@ -142,6 +147,122 @@ static void testNewEffectRendering(){
   settings.light.mode=mode;transition.retarget(settings,1000);transition.frame(settings,noTimer,1000,after.pixels);
   assert(sameFrame(before,after));transition.frame(settings,noTimer,1000+Config::FADE_MS,after.pixels);
   assert(sameFrame(after,capture(settings,Config::FADE_MS)));
+ }
+}
+static void testColorQuantization(){
+ Settings settings;settings.power=true;settings.light.mode=SlowColor;settings.light.brightness=5;
+ Timer timer;CapturedFrame previous,current;unsigned changes=0,maxHold=0;
+ for(int speed:{1,50,100}){
+  settings.light.speed=speed;Renderer renderer;renderer.begin(settings,0);renderer.frame(settings,timer,1000,previous.pixels);
+  unsigned hold=0;changes=0;maxHold=0;
+  for(uint32_t now=1016;now<121000;now+=16){
+   renderer.frame(settings,timer,now,current.pixels);
+   for(int channel=0;channel<3;channel++){
+    // A paired-height change is 2/20 = 0.1 code of aggregate light,
+    // instead of changing all 20 LEDs by one full code together.
+    assert(std::abs(int(channelTotal(current,channel))-int(channelTotal(previous,channel)))<=2);
+    uint8_t low=255,high=0;
+    for(auto& row:current.pixels){if(row[channel]<low)low=row[channel];if(row[channel]>high)high=row[channel];}
+    assert(high-low<=1);
+    for(int h=0;h<Config::HEIGHT_COUNT;h++)assert(current.pixels[h][channel]==current.pixels[Config::LED_COUNT-1-h][channel]);
+   }
+   if(sameFrame(previous,current)){hold+=16;if(hold>maxHold)maxHold=hold;}else{hold=0;changes++;}
+   previous=current;
+  }
+  assert(changes>100&&maxHold<500);
+ }
+ // Static sleeping/solid colors stay uniform and unchanged after their
+ // power fade. Rendering a fixed instant never alternates fractional codes.
+ for(int mode:{Sleep,Solid,SlowColor,Rainbow,Aurora,Ocean,Forest,Sunset,ColorWaves}){
+  settings.light.mode=mode;settings.light.r=71;settings.light.g=137;settings.light.b=193;
+  Renderer renderer;renderer.begin(settings,0);renderer.frame(settings,timer,2000,previous.pixels);
+  for(int repeat=0;repeat<100;repeat++){renderer.frame(settings,timer,2000,current.pixels);assert(sameFrame(current,previous));}
+  if(mode==Sleep||mode==Solid){
+   assert(!hasSpatialVariation(previous));
+   for(uint32_t now=2016;now<10000;now+=16){renderer.frame(settings,timer,now,current.pixels);assert(sameFrame(current,previous));}
+  }
+ }
+ // The first and last hue sectors join without a full-strip color jump.
+ settings.light.mode=SlowColor;settings.light.speed=100;
+ CapturedFrame left=capture(settings,7992),right=capture(settings,8008);
+ for(int channel=0;channel<3;channel++)assert(std::abs(int(channelTotal(left,channel))-int(channelTotal(right,channel)))<=2);
+ // Before multiplying color, full gain is capped to 76 rather than 76.5.
+ // A color approaching a primary therefore retains its final fractional step.
+ settings.light.brightness=100;
+ CapturedFrame nearPeak=capture(settings,1327);
+ assert(channelTotal(nearPeak,0)==76u*Config::LED_COUNT);
+ assert(channelTotal(nearPeak,1)<76u*Config::LED_COUNT-2);
+ for(auto& row:nearPeak.pixels)for(auto value:row)assert(value<=76);
+ std::cout<<"PASS: color aggregate step <=0.1 PWM/16ms at brightness5; fixed spatial rounding without temporal flicker\n";
+}
+static void testRoundingFadeAndSpeedPhase(){
+ Settings settings;settings.power=true;settings.light.brightness=5;settings.light.r=71;settings.light.g=137;settings.light.b=193;
+ Timer timer;
+ for(int oldMode:{Sleep,Solid})for(int newMode:{SlowColor,Rainbow,Aurora,Ocean,Forest,Sunset,ColorWaves}){
+  settings.light.mode=oldMode;Renderer renderer;renderer.begin(settings,0);CapturedFrame before,after;
+  renderer.frame(settings,timer,1400,before.pixels);settings.light.mode=newMode;
+  renderer.retarget(settings,1400);renderer.frame(settings,timer,1400,after.pixels);assert(sameFrame(before,after));
+  // A second mode switch during the transition must retain the already
+  // blended thresholds, including a fractional color at low brightness.
+  renderer.frame(settings,timer,1700,before.pixels);settings.light.mode=oldMode;
+  renderer.retarget(settings,1700);renderer.frame(settings,timer,1700,after.pixels);assert(sameFrame(before,after));
+  renderer.frame(settings,timer,1700+Config::FADE_MS,after.pixels);assert(!hasSpatialVariation(after));
+ }
+ settings.light.brightness=100;settings.light.r=settings.light.g=settings.light.b=255;
+ for(int mode=0;mode<ModeCount;mode++){
+  if(cyclePeriod(mode,1)<=0)continue;
+  settings.light.mode=mode;settings.light.speed=1;
+  uint32_t oldPeriod=cycleMillis(cyclePeriod(mode,1)),newPeriod=cycleMillis(cyclePeriod(mode,100));
+  // Change rate in cycle 3, at phase 0.37. Twinkle must retain both its
+  // current cluster identity and the phase of that cluster's pulse.
+  uint32_t changeAt=oldPeriod*3+oldPeriod*37/100;
+  Renderer renderer;renderer.begin(settings,0);CapturedFrame before,after;
+  renderer.frame(settings,timer,changeAt,before.pixels);settings.light.speed=100;
+  renderer.retarget(settings,changeAt);renderer.frame(settings,timer,changeAt,after.pixels);assert(sameFrame(before,after));
+  renderer.frame(settings,timer,changeAt+Config::FADE_MS,after.pixels);
+  CapturedFrame expected=capture(settings,newPeriod*3+newPeriod*37/100+Config::FADE_MS);
+  for(int i=0;i<Config::LED_COUNT;i++)for(int channel=0;channel<3;channel++)assert(std::abs(int(after.pixels[i][channel])-int(expected.pixels[i][channel]))<=1);
+ }
+ // After changing the fastest hue cycle to the slowest, the settled color
+ // remains near the visible color instead of jumping to a fresh red phase.
+ settings.light.mode=SlowColor;settings.light.speed=100;
+ Renderer slow;slow.begin(settings,0);CapturedFrame before,after;slow.frame(settings,timer,7777,before.pixels);
+ settings.light.speed=1;slow.retarget(settings,7777);slow.frame(settings,timer,7777+Config::FADE_MS,after.pixels);
+ for(int i=0;i<Config::LED_COUNT;i++)for(int channel=0;channel<3;channel++)assert(std::abs(int(after.pixels[i][channel])-int(before.pixels[i][channel]))<=4);
+ // Candle does not use speed; adjusting the slider must not reset its time.
+ settings.light.mode=Candle;settings.light.speed=1;Renderer candle;candle.begin(settings,0);
+ candle.frame(settings,timer,7777,before.pixels);settings.light.speed=100;candle.retarget(settings,7777);
+ candle.frame(settings,timer,7777+Config::FADE_MS,after.pixels);assert(sameFrame(after,capture(settings,7777+Config::FADE_MS)));
+}
+static void testTwinkleClusters(){
+ Settings settings;settings.power=true;settings.light.mode=Twinkle;settings.light.r=settings.light.g=settings.light.b=255;
+ for(int speed:{1,50,100})for(int brightness:{5,50,100}){
+  settings.light.speed=speed;settings.light.brightness=brightness;
+  uint32_t period=cycleMillis(cyclePeriod(Twinkle,speed));assert(period>=1600);
+  bool used[Config::HEIGHT_COUNT]={};int last=-1;
+  for(unsigned step=0;step<10;step++){
+   CapturedFrame peak=capture(settings,step*period+period/2);
+   int brightest=-1,maximum=0,active=0,first=-1,final=-1;
+   for(int h=0;h<Config::HEIGHT_COUNT;h++){
+    int value=peak.pixels[h][0];
+    if(value>maximum){maximum=value;brightest=h;}
+    if(value){active++;if(first<0)first=h;final=h;}
+    for(int channel=0;channel<3;channel++)assert(peak.pixels[h][channel]==peak.pixels[Config::LED_COUNT-1-h][channel]);
+   }
+   assert(maximum>=5&&active>=1&&active<=3&&final-first<=2);
+   assert(brightest>=0&&!used[brightest]);used[brightest]=true;
+   if(last>=0)assert(std::abs(brightest-last)>=3);
+   last=brightest;
+   // The previous cluster disappears fully before the new one grows;
+   // dark background makes its small bright patch visually distinct.
+   CapturedFrame boundary=capture(settings,(step+1)*period);assert(frameTotal(boundary)==0);
+   for(uint32_t at=period/4;at<period;at+=113){
+    CapturedFrame frame=capture(settings,step*period+at);int lit=0;
+    for(int h=0;h<Config::HEIGHT_COUNT;h++)if(frame.pixels[h][0])lit++;
+    assert(lit<=3);
+   }
+  }
+  for(bool visited:used)assert(visited);
  }
 }
 struct TouchFixture {
@@ -243,6 +364,7 @@ int main(){
  Touch bootHeld;raw[0]=true;bootHeld.begin(0);bootHeld.scan(raw,10,[&](TouchEvent e){events.push_back(e);});bootHeld.scan(raw,4000,[&](TouchEvent e){events.push_back(e);});raw[0]=false;bootHeld.scan(raw,5000,[&](TouchEvent e){events.push_back(e);});bootHeld.scan(raw,5030,[&](TouchEvent e){events.push_back(e);});assert(events.empty());
  testWiFiResetChord();
  testNewEffectCommands();testNewEffectRendering();
+ testColorQuantization();testRoundingFadeAndSpeedPhase();testTwinkleClusters();
  Renderer render;Settings s;s.power=true;s.light.mode=Solid;s.light.r=s.light.g=s.light.b=255;s.light.brightness=100;Timer noTimer;uint8_t frame[Config::LED_COUNT][3];render.begin(s,0);render.frame(s,noTimer,800,frame);assert(frame[0][0]==76);
  s.power=false;render.retarget(s,800);render.frame(s,noTimer,1600,frame);for(auto& row:frame)for(auto x:row)assert(x==0);
  s.power=true;s.light.mode=Rise;render.begin(s,0);for(uint32_t n=800;n<20000;n+=33){render.frame(s,noTimer,n,frame);for(int i=0;i<10;i++)for(int ch=0;ch<3;ch++)assert(frame[i][ch]==frame[19-i][ch]);}

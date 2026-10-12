@@ -1,3 +1,4 @@
 48d6a6d668dd4a18347aa8d8ccfcedb4b0f8c59c3f3b23cc3ebc075d92ae36fe  DenDeco-1.0.0-ota.bin
 6f7060a700346a8783671b915c1cfa8ff56f0a9a720ef9d0aa083bc4932ee979  DenDeco-1.1.0-ota.bin
 b357c07c7733e639240ba04b7cd6712a1cf8e12e5b39dae437eae2ff1ffdb57d  DenDeco-1.2.0-ota.bin
+f51afcc6bcb1fb8d48a8be7946d8d2332e928089fd952aa2882e5aa811f28b4f  DenDeco-1.2.1-ota.bin

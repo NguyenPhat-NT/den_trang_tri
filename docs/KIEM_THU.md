@@ -1,8 +1,8 @@
-# Kiểm thử và nghiệm thu Đèn Deco 1.2.0
+# Kiểm thử và nghiệm thu Đèn Deco 1.2.1
 
 ## Đã thực hiện trên phần mềm
 
-Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0. Thông tin build và kết quả chạy mới cho 1.2.0 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã lắp đèn và báo các bản trước chạy mượt, nhưng chưa có ghi nhận riêng cho từng ca nghiệm thu. **Bản 1.2.0 mới chưa thử trên bo**; build và web mock không thay cho thử phần cứng.
+Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0; phần 1.2.0 giữ kết quả lịch sử riêng. Thông tin build và kết quả chạy mới cho 1.2.1 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã thử 1.2.0 trên đèn thật, báo bước chuyển màu còn lớn và Lấp lánh khó thấy do mật độ LED lớn. **Bản 1.2.1 cần thử lại trên bo/vỏ đó**; build và web mock không xác nhận độ mượt cảm nhận.
 
 - Sketch chẩn đoán LED_Check cũng đã build thành công cho cùng ESP32-C3/core.
 - Build thực tế ESP32-C3: PlatformIO espressif32 6.12.0, Arduino ESP32 2.0.17, NeoPixel 1.12.5, ArduinoJson 7.4.2; USB CDC bật và phân vùng OTA 4 MB.
@@ -35,16 +35,36 @@ Các kiểm tra phần mềm dưới đây đã chạy thành công cho bản m�
 
 ## Chạy thử bổ sung bản 1.2.0 trên đèn
 
+Người dùng đã thử bản 1.2.0 và phản hồi về chuyển màu/Lấp lánh; chưa có kết quả riêng từng ca E01–E08 để ghi Đạt.
+
 | Mã | Kiểm tra | Cần đạt | Kết quả thực tế |
 | --- | --- | --- | --- |
-| E01 | Chọn tám hiệu ứng mới trên web, đi vòng bằng M | Đúng tên/mã 6–13; M đi đủ 14 chế độ rồi về Ngủ, ánh sáng hiển thị qua vỏ ổn định | Chưa thử 1.2.0 |
-| E02 | Tốc độ 1/50/100 ở từng hiệu ứng mới | Tăng tốc độ thấy hiệu ứng chạy nhanh hơn; giữ mode, màu và độ sáng đang chọn | Chưa thử 1.2.0 |
-| E03 | Đổi RGB ở Thở nhẹ, Lấp lánh và Sao băng | Hiệu ứng giữ nguyên, dùng màu mới; các trình duyệt đồng bộ đúng | Chưa thử 1.2.0 |
-| E04 | Đổi RGB ở các hiệu ứng dùng bảng màu riêng | Chuyển sang Một màu; chọn lại hiệu ứng trở về bảng màu của hiệu ứng | Chưa thử 1.2.0 |
-| E05 | Lưu/áp dụng mục yêu thích chứa hiệu ứng mới, chờ lưu rồi reboot | Khôi phục đúng mode, RGB, độ sáng và tốc độ; không đổi cờ bật/tắt ngoài quy tắc hiện có | Chưa thử 1.2.0 |
-| E06 | OTA 1.1.0 → 1.2.0 với cấu hình và ba mục yêu thích cũ | Giữ mã chế độ cũ, cấu hình đèn, WiFi, tên và hostname sau reboot/lưu mới | Chưa thử 1.2.0 |
-| E07 | Đọc Hướng dẫn sử dụng trên điện thoại và PC | Mở được ngay trong web, thao tác và bảng chế độ đúng; nội dung đọc được, không tràn ngang | Chưa thử 1.2.0 |
-| E08 | Bật/tắt, chỉnh sáng và hẹn giờ khi chạy hiệu ứng mới | Trần và độ sáng áp dụng; tắt RGB 0; giảm/tắt theo timer và hủy timer đúng quy tắc | Chưa thử 1.2.0 |
+| E01 | Chọn tám hiệu ứng mới trên web, đi vòng bằng M | Đúng tên/mã 6–13; M đi đủ 14 chế độ rồi về Ngủ, ánh sáng hiển thị qua vỏ ổn định | Chưa ghi kết quả từng ca |
+| E02 | Tốc độ 1/50/100 ở từng hiệu ứng mới | Tăng tốc độ thấy hiệu ứng chạy nhanh hơn; giữ mode, màu và độ sáng đang chọn | Chưa ghi kết quả từng ca |
+| E03 | Đổi RGB ở Thở nhẹ, Lấp lánh và Sao băng | Hiệu ứng giữ nguyên, dùng màu mới; các trình duyệt đồng bộ đúng | Chưa ghi kết quả từng ca |
+| E04 | Đổi RGB ở các hiệu ứng dùng bảng màu riêng | Chuyển sang Một màu; chọn lại hiệu ứng trở về bảng màu của hiệu ứng | Chưa ghi kết quả từng ca |
+| E05 | Lưu/áp dụng mục yêu thích chứa hiệu ứng mới, chờ lưu rồi reboot | Khôi phục đúng mode, RGB, độ sáng và tốc độ; không đổi cờ bật/tắt ngoài quy tắc hiện có | Chưa ghi kết quả từng ca |
+| E06 | OTA 1.1.0 → 1.2.0 với cấu hình và ba mục yêu thích cũ | Giữ mã chế độ cũ, cấu hình đèn, WiFi, tên và hostname sau reboot/lưu mới | Chưa ghi kết quả từng ca |
+| E07 | Đọc Hướng dẫn sử dụng trên điện thoại và PC | Mở được ngay trong web, thao tác và bảng chế độ đúng; nội dung đọc được, không tràn ngang | Chưa ghi kết quả từng ca |
+| E08 | Bật/tắt, chỉnh sáng và hẹn giờ khi chạy hiệu ứng mới | Trần và độ sáng áp dụng; tắt RGB 0; giảm/tắt theo timer và hủy timer đúng quy tắc | Chưa ghi kết quả từng ca |
+
+## Kiểm tra bổ sung bản 1.2.1
+
+Các kiểm tra phần mềm bên dưới đã đạt cho bản 1.2.1; cảm nhận trên đèn/vỏ thật vẫn cần người dùng kiểm tra ở bảng F01–F04.
+
+- PASS Core (C++11, ASan/UBSan): khung mục tiêu 16 ms, phân bố làm tròn cố định ở mã 2/4/8/9/10/11/13; giữ đúng trần, Ngủ/Một màu đồng màu và ngưỡng làm tròn đối xứng giữa hai nhánh. Kiểm tra Chuyển màu ở mức sáng 5% có bước màu tổng hợp tối đa 0,1 mã/kênh/16 ms trên chuỗi LED mô phỏng. Mẫu làm tròn không đổi theo thời gian nên không tạo PWM phần mềm.
+- PASS pha/tốc độ: đổi tốc độ giữ pha và vị trí cụm, chu kỳ/uptime dài không làm mất độ chính xác chuyển động; Chuyển màu chậm/Cầu vồng có chu kỳ nhanh nhất 8/12 giây. Các kiểm tra fade, khung đầu chuyển tiếp, bật/tắt và timer vẫn đạt; sai số làm tròn ở mức timer 50% không quá một mã.
+- PASS Lấp lánh: cụm RGB thưa chỉ 1–3 tầng đang sáng, các vị trí còn lại gần đen; lên/xuống mềm, không vượt độ sáng/trần, tint giữ chế độ. Mô hình tán sáng Gaussian cho thấy tương phản tốt hơn bản cũ, nhưng không thay cho kiểm tra vỏ thật; tổng ánh sáng của chế độ này giảm vì ít LED sáng cùng lúc.
+- PASS web: mô tả cụm sáng/nền tối và lời khuyên chỉnh theo phòng/vỏ đúng; kiểm tra bàn phím/layout/hướng dẫn và các điều khiển cũ vẫn đạt. Giữ 14 ID, trường cấu hình, schema 2, mục yêu thích và WiFi/AP; lưu trữ không sửa ở bản này. Build ESP32-C3 dùng core/thư viện hiện tại; thông tin và SHA ở `BUILD_INFO.md`.
+
+## Chạy thử bổ sung bản 1.2.1 trên đèn
+
+| Mã | Kiểm tra | Cần đạt / cần ghi nhận | Kết quả thực tế |
+| --- | --- | --- | --- |
+| F01 | Các hiệu ứng tự chuyển màu mã 2/4/8/9/10/11/13; sáng 5/50/100 và tốc độ 1/50/100 | So sánh bước màu qua đúng vỏ với 1.2.0, ghi mức còn thấy bước và hai nhánh cùng độ cao; không suy ra mượt từ FPS | Chưa thử 1.2.1 |
+| F02 | Đổi tốc độ khi hiệu ứng đang chạy, theo dõi qua vòng chu kỳ | Pha không nhảy lúc đổi tốc độ; thay đổi tốc độ thấy được; ghi nếu còn giật qua chu kỳ | Chưa thử 1.2.1 |
+| F03 | Lấp lánh qua vỏ dày với vài màu RGB, sáng/tốc độ khác nhau | Cụm xuất hiện/tắt dần thấy được trên nền gần đen, giữ màu đã chọn; ghi độ tương phản so với 1.2.0 | Chưa thử 1.2.1 |
+| F04 | OTA 1.2.0 → 1.2.1, reboot và áp dụng mục yêu thích | Giữ trạng thái bật/tắt, 14 mã chế độ, RGB, sáng/tốc độ, mục yêu thích, WiFi/tên/hostname; thử bật/tắt bình thường | Chưa thử 1.2.1 |
 
 ## Bảng chạy thử trên thiết bị
 
@@ -103,4 +123,4 @@ node tests/web_test.cjs
 
 Kiểm tra web cần package Playwright và Chromium. Đặt biến `DECO_BROWSER` bằng đường dẫn executable nếu Chromium không ở `/usr/bin/chromium`. Ảnh chụp web từ mock chỉ minh họa UI, không là bằng chứng thiết bị đã chạy.
 
-Người dùng đã báo các bản trước hoạt động mượt; bảng chưa có kết quả từng ca để đánh dấu Đạt. Các thử bổ sung bản 1.2.0, đặc biệt tám hiệu ứng qua vỏ và nâng cấp giữ cấu hình, vẫn chờ thử trên bo thật.
+Người dùng đã lắp và thử 1.2.0, có phản hồi chuyển màu/Lấp lánh; bảng nền chưa có kết quả từng ca để đánh dấu Đạt. Bản 1.2.1 ưu tiên F01–F04 trên bo/vỏ thật để xác nhận thay đổi và giữ cấu hình sau OTA.

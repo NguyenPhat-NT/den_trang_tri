@@ -132,94 +132,144 @@ inline Color hsv(float h){h=h-floorf(h);float x=h*6;int i=int(x);float f=x-i;swi
 inline Color colorMix(const Color& a,const Color& b,float amount){return {a.r+(b.r-a.r)*amount,a.g+(b.g-a.g)*amount,a.b+(b.b-a.b)*amount};}
 inline Color colorGain(const Color& color,float amount){return {color.r*amount,color.g*amount,color.b*amount};}
 inline float wave(float cycles){return .5f+.5f*sinf(cycles*6.28318531f);}
-inline float cyclePhase(uint32_t elapsed,float seconds){uint32_t period=uint32_t(seconds*1000.0f+.5f);return float(elapsed%period)/period;}
+inline uint32_t cycleMillis(float seconds){return uint32_t(seconds*1000.0f+.5f);}
+inline float cyclePhase(uint32_t elapsed,float seconds){uint32_t period=cycleMillis(seconds);return float(elapsed%period)/period;}
+inline float cyclePeriod(uint8_t mode,uint8_t rate){
+ float speed=(rate-1)/99.0f;
+ switch(mode){
+  case SlowColor:return 120.0f-112.0f*speed;
+  case Rainbow:return 120.0f-108.0f*speed;
+  case Rise:return 8.0f-7.0f*speed;
+  case Breath:return 16.0f-12.0f*speed;
+  case Twinkle:return 4.8f-3.2f*speed;
+  case Aurora:return 45.0f-35.0f*speed;
+  case Ocean:return 30.0f-23.0f*speed;
+  case Forest:return 50.0f-38.0f*speed;
+  case Sunset:return 60.0f-46.0f*speed;
+  case Comet:return 24.0f-18.0f*speed;
+  case ColorWaves:return 32.0f-24.0f*speed;
+  default:return 0;
+ }
+}
+inline bool spatialRounding(uint8_t mode){return mode==SlowColor||mode==Rainbow||mode==Aurora||mode==Ocean||mode==Forest||mode==Sunset||mode==ColorWaves;}
+inline Color roundingThreshold(uint8_t mode,uint16_t height){
+ if(!spatialRounding(mode))return {.5f,.5f,.5f};
+ // One fixed threshold per paired height, with a separate ordering for
+ // each channel. This spreads fractional levels spatially, never in time.
+ return {(float((height*3u)%Config::HEIGHT_COUNT)+.5f)/Config::HEIGHT_COUNT,
+         (float((height*3u+2u)%Config::HEIGHT_COUNT)+.5f)/Config::HEIGHT_COUNT,
+         (float((height*3u+4u)%Config::HEIGHT_COUNT)+.5f)/Config::HEIGHT_COUNT};
+}
 class Renderer {
  Color from[Config::LED_COUNT],current[Config::LED_COUNT];Light target;
+ Color roundFrom[Config::HEIGHT_COUNT],roundCurrent[Config::HEIGHT_COUNT];
  float pFrom=5,pCurrent=5,pTarget=5,gateFrom=0,gateCurrent=0,gateTarget=0,lastTimerEnvelope=1;
+ float phaseOffset=0;uint8_t twinkleStepOffset=0;
  uint32_t transitionAt=0,phaseAt=0,feedbackAt=0;bool feedbackActive=false;
+ float phase(const Light& l,uint32_t now)const{
+  float unit=phaseOffset+cyclePhase(uint32_t(now-phaseAt),cyclePeriod(l.mode,l.speed));
+  return unit-floorf(unit);
+ }
+ uint8_t twinkleStep(const Light& l,uint32_t now)const{
+  uint32_t elapsed=now-phaseAt,period=cycleMillis(cyclePeriod(l.mode,l.speed));
+  uint32_t carry=phaseOffset+float(elapsed%period)/period>=1.0f?1u:0u;
+  return uint8_t((twinkleStepOffset+elapsed/period+carry)%10u);
+ }
  Color effect(const Light& l,uint16_t i,uint32_t now)const{
-  uint32_t elapsed=now-phaseAt;float t=float(elapsed)/1000.0f;float speed=(l.speed-1)/99.0f;
+  uint32_t elapsed=now-phaseAt;float t=float(elapsed)/1000.0f;
   uint16_t height=i<Config::HEIGHT_COUNT?i:Config::LED_COUNT-1-i;
   float z=Config::HEIGHT_COUNT>1?float(height)/(Config::HEIGHT_COUNT-1):0;
   Color tint(l.r/255.0f,l.g/255.0f,l.b/255.0f);
+  float cycle=cyclePeriod(l.mode,l.speed)>0?phase(l,now):0;
   switch(l.mode){
    case Sleep:return {Config::SLEEP_R/255.0f,Config::SLEEP_G/255.0f,Config::SLEEP_B/255.0f};
    case Solid:return {l.r/255.0f,l.g/255.0f,l.b/255.0f};
-   case SlowColor:return hsv(t/(120.0f-119.0f*speed)); // speed 50: about 61 seconds
+   case SlowColor:return hsv(cycle); // linear hue, 120..8 seconds per cycle
    case Candle:{float f=.9f+.045f*sinf(t*4.3f)+.035f*sinf(t*7.7f+float(i)*.23f)+.02f*sinf(t*13.1f);return {f,.37647f*f,.09412f*f};}
-   case Rainbow:return hsv(float(i)/Config::LED_COUNT+t/(120.0f-115.0f*speed));
-   case Rise:{uint16_t h=i<Config::HEIGHT_COUNT?i:Config::LED_COUNT-1-i;float pos=fmodf(t/(8.0f-7.0f*speed),1.0f)*(Config::HEIGHT_COUNT+3)-2.0f;float f=clamp01(1-fabsf(h-pos)/2.0f);return {f,.37647f*f,.09412f*f};}
+   case Rainbow:return hsv(float(i)/Config::LED_COUNT+cycle);
+   case Rise:{float pos=cycle*(Config::HEIGHT_COUNT+3)-2.0f;float f=clamp01(1-fabsf(height-pos)/2.0f);return {f,.37647f*f,.09412f*f};}
    case Breath:{
-    float phase=cyclePhase(elapsed,16.0f-12.0f*speed);
-    float pulse=.5f-.5f*cosf(phase*6.28318531f);
+    float pulse=.5f-.5f*cosf(cycle*6.28318531f);
     return colorGain(tint,.16f+.84f*pulse);
    }
    case Twinkle:{
-    // Fixed per-height phases make the sparkle repeatable without random
-    // state. Wide overlapping blooms avoid abrupt on/off flashing.
-    float phase=cyclePhase(elapsed,18.0f-13.0f*speed);
-    float salt=float((height*73u+19u)%101u)/101.0f;
-    float first=wave(phase+salt),second=wave(phase*2.0f+salt*.63f+.31f);
-    first*=first;first*=first;second*=second;second*=second;
-    return colorGain(tint,.20f+.55f*first+.25f*second);
+    // A single soft cluster moves to a separated height only while dark.
+    // Fixed ordering is deterministic and keeps most of the lamp unlit.
+    static const uint8_t centers[10]={0,6,2,8,4,9,3,7,1,5};
+    float center=centers[twinkleStep(l,now)]*(Config::HEIGHT_COUNT-1)/9.0f;
+    float distance=fabsf(height-center),spatial=distance<1.5f?.5f+.5f*cosf(distance*3.14159265f/1.5f):0;
+    float bloom=sinf(cycle*3.14159265f);bloom*=bloom;
+    return colorGain(tint,.005f+.995f*spatial*bloom);
    }
    case Aurora:{
-    float phase=cyclePhase(elapsed,45.0f-35.0f*speed);
-    Color ribbons=colorMix({.02f,.85f,.38f},{.38f,.04f,.88f},wave(z*.85f-phase));
-    ribbons=colorMix(ribbons,{.08f,.55f,.85f},.40f*wave(z*1.6f+phase*2.0f+.2f));
-    return colorGain(ribbons,.30f+.70f*wave(z*.65f-phase+.15f));
+    Color ribbons=colorMix({.02f,.85f,.38f},{.38f,.04f,.88f},wave(z*.85f-cycle));
+    ribbons=colorMix(ribbons,{.08f,.55f,.85f},.40f*wave(z*1.6f+cycle*2.0f+.2f));
+    return colorGain(ribbons,.30f+.70f*wave(z*.65f-cycle+.15f));
    }
    case Ocean:{
-    float phase=cyclePhase(elapsed,30.0f-23.0f*speed);
-    float swell=wave(z*1.25f-phase),foam=wave(z*2.0f-phase*2.0f+.18f);
+    float swell=wave(z*1.25f-cycle),foam=wave(z*2.0f-cycle*2.0f+.18f);
     Color sea=colorMix({.01f,.04f,.30f},{.02f,.62f,.80f},swell);
     sea=colorMix(sea,{.30f,.72f,.92f},.28f*foam*foam);
     return colorGain(sea,.55f+.45f*swell);
    }
    case Forest:{
-    float phase=cyclePhase(elapsed,50.0f-38.0f*speed);
-    Color leaves=colorMix({.02f,.30f,.06f},{.30f,.65f,.04f},wave(z-phase));
-    float sun=wave(z*1.75f-phase*2.0f+.2f);sun*=sun;
+    Color leaves=colorMix({.02f,.30f,.06f},{.30f,.65f,.04f},wave(z-cycle));
+    float sun=wave(z*1.75f-cycle*2.0f+.2f);sun*=sun;
     leaves=colorMix(leaves,{.65f,.42f,.06f},.30f*sun);
-    return colorGain(leaves,.55f+.45f*wave(z-phase+.3f));
+    return colorGain(leaves,.55f+.45f*wave(z-cycle+.3f));
    }
    case Sunset:{
-    float phase=cyclePhase(elapsed,60.0f-46.0f*speed);
-    Color sky=colorMix({1.0f,.38f,.04f},{.90f,.08f,.24f},clamp01(z*.70f+.30f*wave(phase)));
-    sky=colorMix(sky,{.15f,.025f,.40f},z*z*(.20f+.40f*wave(phase+.2f)));
-    return colorGain(sky,.70f+.30f*wave(z-phase));
+    Color sky=colorMix({1.0f,.38f,.04f},{.90f,.08f,.24f},clamp01(z*.70f+.30f*wave(cycle)));
+    sky=colorMix(sky,{.15f,.025f,.40f},z*z*(.20f+.40f*wave(cycle+.2f)));
+    return colorGain(sky,.70f+.30f*wave(z-cycle));
    }
    case Comet:{
-    float phase=cyclePhase(elapsed,24.0f-18.0f*speed);
     // The head travels beyond both ends before looping; its soft tail is
     // nearly dark there, keeping the restart gentle on a short LED strip.
-    float head=phase*(Config::HEIGHT_COUNT+12.0f)-6.0f,d=head-height;
+    float head=cycle*(Config::HEIGHT_COUNT+12.0f)-6.0f,d=head-height;
     float glow=expf(-d*d/1.6f),tail=d>=0?expf(-d/2.0f):expf(d*2.5f);
     return colorGain(tint,.02f+.98f*(.85f*glow+.15f*tail));
    }
    case ColorWaves:{
-    float phase=cyclePhase(elapsed,32.0f-24.0f*speed);
-    Color colors=colorMix(hsv(z-phase),{.10f,.12f,.18f},.15f);
-    return colorGain(colors,.40f+.60f*wave(z*1.5f-phase));
+    Color colors=colorMix(hsv(z-cycle),{.10f,.12f,.18f},.15f);
+    return colorGain(colors,.40f+.60f*wave(z*1.5f-cycle));
    }
    default:return {};
   }
  }
  public:
- void begin(const Settings& s,uint32_t now){target=s.light;pFrom=pCurrent=pTarget=s.light.brightness;gateFrom=gateCurrent=0;gateTarget=s.power?1:0;transitionAt=phaseAt=now;for(uint16_t i=0;i<Config::LED_COUNT;i++)from[i]=current[i]=effect(target,i,now);}
- void retarget(const Settings& s,uint32_t now){for(uint16_t i=0;i<Config::LED_COUNT;i++)from[i]=current[i];pFrom=pCurrent;pTarget=s.light.brightness;gateFrom=gateCurrent*lastTimerEnvelope;gateTarget=s.power?1:0;if(target.mode!=s.light.mode)phaseAt=now;target=s.light;transitionAt=now;}
+ void begin(const Settings& s,uint32_t now){
+  target=s.light;pFrom=pCurrent=pTarget=s.light.brightness;gateFrom=gateCurrent=0;gateTarget=s.power?1:0;transitionAt=phaseAt=now;phaseOffset=0;twinkleStepOffset=0;
+  for(uint16_t i=0;i<Config::LED_COUNT;i++)from[i]=current[i]=effect(target,i,now);
+  for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundFrom[h]=roundCurrent[h]=roundingThreshold(target.mode,h);
+ }
+ void retarget(const Settings& s,uint32_t now){
+  for(uint16_t i=0;i<Config::LED_COUNT;i++)from[i]=current[i];
+  for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundFrom[h]=roundCurrent[h];
+  pFrom=pCurrent;pTarget=s.light.brightness;gateFrom=gateCurrent*lastTimerEnvelope;gateTarget=s.power?1:0;
+  if(target.mode!=s.light.mode){phaseAt=now;phaseOffset=0;twinkleStepOffset=0;}
+  else if(target.speed!=s.light.speed&&cyclePeriod(target.mode,target.speed)>0){
+   uint8_t step=target.mode==Twinkle?twinkleStep(target,now):0;
+   phaseOffset=phase(target,now);twinkleStepOffset=step;phaseAt=now;
+  }
+  target=s.light;transitionAt=now;
+ }
  void feedback(uint32_t now){feedbackAt=now;feedbackActive=true;}
  void frame(const Settings& s,const Timer& timer,uint32_t now,uint8_t out[Config::LED_COUNT][3]){
   float k=clamp01(float(uint32_t(now-transitionAt))/Config::FADE_MS);
   pCurrent=pFrom+(pTarget-pFrom)*k;gateCurrent=gateFrom+(gateTarget-gateFrom)*k;
   float pulse=1;if(feedbackActive){float f=float(uint32_t(now-feedbackAt))/400.0f;if(f>=1)feedbackActive=false;else pulse=1-.15f*sinf(f*3.14159265f);}
   lastTimerEnvelope=timer.envelope(now);
-  float gain=scale(pCurrent,s.cap)*gateCurrent*lastTimerEnvelope*pulse;
   int maxCode=int(floorf(s.cap/100.0f*255.0f));
+  float peakCodes=fminf(scale(pCurrent,s.cap)*255,maxCode);
+  float gainCodes=peakCodes*gateCurrent*lastTimerEnvelope*pulse;
+  for(uint16_t h=0;h<Config::HEIGHT_COUNT;h++)roundCurrent[h]=colorMix(roundFrom[h],roundingThreshold(target.mode,h),k);
   for(uint16_t i=0;i<Config::LED_COUNT;i++){
    Color e=effect(target,i,now);current[i]={from[i].r+(e.r-from[i].r)*k,from[i].g+(e.g-from[i].g)*k,from[i].b+(e.b-from[i].b)*k};
    float c[3]={current[i].r,current[i].g,current[i].b};
-   for(int j=0;j<3;j++){int code=int(lroundf(clamp01(c[j])*gain*255));out[i][j]=code>maxCode?maxCode:code<0?0:code;}
+   uint16_t height=i<Config::HEIGHT_COUNT?i:Config::LED_COUNT-1-i;
+   float threshold[3]={roundCurrent[height].r,roundCurrent[height].g,roundCurrent[height].b};
+   for(int j=0;j<3;j++){int code=int(floorf(clamp01(c[j])*gainCodes+1.0f-threshold[j]));out[i][j]=code>maxCode?maxCode:code<0?0:code;}
   }
  }
 };
