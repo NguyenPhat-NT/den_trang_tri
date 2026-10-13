@@ -1,8 +1,18 @@
-# Cấu hình và kế hoạch Đèn Deco 1.3.0
+# Cấu hình và kế hoạch Đèn Deco 1.3.1
 
 ## Các quyết định đã chốt trong chat
 
 Phạm vi: firmware, web trên ESP và hướng dẫn đấu nối/nạp. Người dùng tự xử lý cơ khí/vỏ. ESP32-C3 SuperMini, bốn TTP223, 20 WS2812B và nguồn 5 V–2 A. Tên Đèn Deco; WiFi nhà + AP dự phòng. Máy nạp Windows, Arduino IDE. Bổ sung OTA qua web theo yêu cầu mới.
+
+Bản 1.3.1 cải thiện phục hồi đường WiFi/web sau báo cáo trên 1.3.0: AUTH_EXPIRE (lý do 2) có lúc tự hồi, có lúc cả hostname và IP không truy cập, không thấy AP, LED/cảm ứng vẫn chạy. Bằng chứng mới thu hẹp trigger: lưu lịch mặt trời không đổi vẫn truy cập; sửa lịch rồi lưu nhận ACK đã lưu, sau đó web/IP mất truy cập; kế hoạch còn giữ sau khi web khôi phục. Kết quả reset +/− chưa xác nhận. Chưa xác định NVS, HTTP, WiFi hay tài nguyên RAM/stack là nguyên nhân của lần mất truy cập sau lưu.
+
+Kiểm tra SDK/core 3.3.1 độc lập cho thấy cache `WL_CONNECTED` có thể không đổi sau AUTH_EXPIRE; wrapper `WiFi.disconnect` không hủy lần xác thực đang chờ khi cờ STA connected đã false. Bước bắt đầu lại dựa cache có thể kẹt chờ. IDF thường xóa IP DHCP khi ngắt; riêng AUTH_EXPIRE hoặc cache stale chưa đủ kết luận nguyên nhân của việc không thấy AP trên bo này. Cần đối chiếu RAM trước/sau lưu, checkpoint luồng lưu/HTTP và thời điểm/lý do ngắt khi tái thử trên thiết bị.
+
+Luồng mới chỉ nhận online khi `isConnected`, liên kết vật lý từ driver và IP đều hợp lệ, không có bước bắt đầu mạng đang chờ. Gọi `esp_wifi_disconnect` để hủy lần đang chạy, rồi chờ hữu hạn: 50 ms khi có sự kiện ngắt mới, 150 ms nếu driver đã rời mà không phát sự kiện; driver vẫn liên kết thì giới hạn 1,5 giây trước khi chọn đường AP phục hồi. AP dự phòng sau 30 giây và chu kỳ thử lại khoảng 60 giây được giữ; timeout hủy driver có thể mở AP sớm. Giữ công suất/bảo mật WiFi, core 3.3.1, thuật toán mDNS, pinout, 14 mode và NVS/lịch.
+
+JSON trạng thái bổ sung `wifiDiagnostics`; Serial ghi lý do reset lúc boot và sức khỏe mạng mỗi 10 giây, với IP/hostname/trạng thái driver để phục hồi USB. DHCP lease cũ hoặc status cache không chứng minh online; AUTH_EXPIRE không được mô tả là chắc chắn sai mật khẩu. Thông tin trực tiếp IP không mở cũng không đủ kết luận DNS/OTA hỏng. Hướng dẫn nạp USB giữ Erase All Flash Disabled, core/thư viện và bảng phân vùng; chỉ một nguồn 5 V khi nạp/thu Serial. Kết quả phục hồi thật trên bộ đèn đang chờ.
+
+Chẩn đoán 1.3.1 bổ sung lần ngắt cuối/thời điểm/count và chế độ powerSave; `resources` ghi heap/reset/stack, `planSaveDiagnostics` ghi checkpoint/thời gian/ghi-readback/RAM/trạng thái mạng trước-sau lưu. Dữ liệu chỉ giữ RAM, reset khi boot và không tăng ghi NVS; bỏ qua ASSOC_LEAVE 8 chủ động trong bản ghi ngắt. High-water mark stack của ESP-IDF là byte trống thấp nhất trong vòng đời tác vụ, không phải tức thời/không nhân 4. `successful` nói bước lưu/kiểm tra storage thành công; stage responding trong ACK rồi complete ở GET sau chỉ xác nhận hàm gửi phía server trả về, không bảo đảm browser delivery. Nút Sao chép chẩn đoán dùng whitelist không có session token để thu sau phục hồi; so sánh một lần không đổi với một lần đổi lịch, tránh bấm lưu liên tục.
 
 Bản 1.3.0 thêm tối đa tám dòng lịch tuần ON/OFF theo giờ Internet Việt Nam UTC+7. Mỗi dòng ON tham chiếu trực tiếp một trong ba mục yêu thích (mã 0–2, hiển thị Mục 1–3), đọc nội dung lúc chạy; mục trống/hỏng thì bỏ qua an toàn. Kế hoạch lưu riêng trong NVS `deco-plan`, không đổi schema ánh sáng 2 và không sao chép lại màu của các mục yêu thích.
 
@@ -42,14 +52,14 @@ Chế độ ngủ nhớ riêng mức đã chỉnh, ban đầu 5%. Các mặc đ�
 | Tám hiệu ứng | 14 mã chế độ, tốc độ/tint giữ nguyên; 1.2.1 sửa chuyển màu và Lấp lánh | Người dùng đã thử 1.2.0; cần thử lại 1.2.1 qua vỏ |
 | Chuyển màu/Lấp lánh 1.2.1 | Khung 16 ms, làm tròn theo vị trí cố định, giữ pha và cụm thưa trên nền tối | Kết quả kiểm tra phần mềm ghi ở KIEM_THU.md; cảm nhận trên bo chờ thử lại |
 | Hướng dẫn trong web | Thao tác cảm ứng, chế độ/màu/tốc độ, lưu, mạng và OTA | Bản 1.2.0 cập nhật; kiểm tra trên điện thoại sau nâng cấp |
-| Web/WiFi | Web nhúng, polling 250 ms; quét 2,4 GHz, trạng thái mạng, hostname và AP dự phòng | Bản 1.1.0 cập nhật; kết quả kiểm tra ghi ở KIEM_THU.md |
+| Web/WiFi | Web nhúng, polling 250 ms; quét 2,4 GHz, trạng thái thực driver/IP, AP dự phòng và diagnostics | 1.3.1 sửa phục hồi; kết quả host ghi ở KIEM_THU.md, phục hồi bo thật chờ xác nhận |
 | Reset WiFi từ cảm ứng | Giữ đúng +/− 5 giây, giữ cấu hình đèn và tên | Có từ bản 1.1.0; chưa có kết quả riêng từng ca qua vỏ |
 | Đồng hồ/lịch tuần | SNTP, UTC+7, tám dòng ON/OFF, live favorite, không chạy bù | Bản 1.3.0 bổ sung; kết quả host ghi ở KIEM_THU.md, mạng/bo thật chờ thử |
 | Mặt trời | Tọa độ TP.HCM, bình minh ramp và dusk độc lập, offset/ngày/preset ấm | Bản 1.3.0 bổ sung; thời điểm và ramp trên bo chờ thử |
 | Lưu kế hoạch | Namespace deco-plan, giữ draft và kế hoạch qua reset/OTA | Bản 1.3.0 bổ sung; kiểm tra riêng ánh sáng/NVS và kế hoạch |
-| OTA | File ứng dụng C3, phân vùng còn lại, giữ NVS, reboot sau thành công | Nâng cấp 1.2.x → 1.3.0 giữ cấu hình và kế hoạch đã lưu |
-| Bàn giao Windows | Sketch, .bin OTA 1.3.0, hướng dẫn và checklist | Thông tin gói/build ghi ở BUILD_INFO.md |
-| Nạp và đo trên thiết bị | Ánh sáng/cảm ứng/nguồn, WiFi/mDNS, SNTP/lịch/mặt trời và OTA | Người dùng đã thử 1.2.0; tính năng 1.3.0 cần thử trên bo thật |
+| OTA/USB phục hồi | File ứng dụng C3, giữ NVS/phân vùng; USB khi HTTP/AP mất | Nâng cấp 1.3.0 → 1.3.1 giữ cấu hình và kế hoạch, thử phục hồi W01–W10 |
+| Bàn giao Windows | Sketch, .bin OTA 1.3.1, hướng dẫn USB và checklist | Thông tin gói/build ghi ở BUILD_INFO.md |
+| Nạp và đo trên thiết bị | Ánh sáng/cảm ứng/nguồn, WiFi/mDNS, SNTP/lịch/mặt trời và OTA | Người dùng đã nạp 1.3.0 và báo WiFi/web lỗi; phục hồi 1.3.1 chờ xác nhận |
 
 ## Điểm cần hiệu chỉnh sau nạp
 
@@ -63,7 +73,10 @@ Chế độ ngủ nhớ riêng mức đã chỉnh, ban đầu 5%. Các mặc đ�
 - Reset đúng +/− 5 giây qua vỏ, không nhận nhầm nút và giữ nguyên cấu hình/tên sau reset.
 - Tốc độ, màu và độ mượt qua vỏ, ưu tiên mã 2/4/8/9/10/11/13 ở sáng 5/50/100 và tốc độ 1/50/100; giữ pha khi đổi tốc độ.
 - Độ tương phản Lấp lánh trên vỏ dày với màu RGB đang chọn và nền gần đen.
-- Cấu hình/mục yêu thích/bật tắt trước khi OTA 1.2.x → 1.3.0 và sau reboot; WiFi/tên giữ nguyên.
+- Cấu hình/mục yêu thích/bật tắt và kế hoạch trước khi nạp USB/OTA 1.3.0 → 1.3.1 và sau reboot; WiFi/tên giữ khi không reset riêng WiFi.
+- Khi AUTH_EXPIRE, đối chiếu status cache/liên kết thực/IP, AP và lần thử lại; kiểm tra router DHCP lease cũ không làm đèn báo online giả.
+- So sánh lưu lịch mặt trời không đổi với lưu có sửa: ACK, kế hoạch giữ sau phục hồi, heap/stack/checkpoint và thời điểm ngắt; không suy nguyên nhân chỉ từ việc nhận ACK hoặc dữ liệu còn giữ.
+- Phục hồi từ +/− 5 giây hoặc USB với Erase All Flash Disabled và một nguồn USB; ghi log boot/lý do reset/sức khỏe mạng.
 - SNTP qua mạng nhà có Internet, lịch một phút tương lai và giữ giờ sau mất WiFi; no catch-up sau reset/sửa kế hoạch/OTA.
 - Các ưu tiên trùng lịch, mục yêu thích đổi nội dung/trống/hỏng, dừng ramp bằng tay và hủy countdown khi sự kiện tự động chạy.
 - Bình minh thử thời lượng 1 phút bằng offset hợp lệ vào thời điểm thật gần giờ mặt trời mọc, không giả giờ hiện tại.

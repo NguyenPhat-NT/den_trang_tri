@@ -1,8 +1,8 @@
-# Kiểm thử và nghiệm thu Đèn Deco 1.3.0
+# Kiểm thử và nghiệm thu Đèn Deco 1.3.1
 
 ## Đã thực hiện trên phần mềm
 
-Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0; phần 1.2.0/1.2.1 giữ kết quả lịch sử riêng. Thông tin build và kết quả chạy mới cho 1.3.0 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã thử 1.2.0 trên đèn thật, có phản hồi chuyển màu/Lấp lánh. **SNTP, lịch tuần và tự động mặt trời của bản 1.3.0 cần thử trên bo thật**; host/web mock không xác nhận Internet SNTP, đồng hồ ESP hoặc ramp thực tế.
+Các kiểm tra nền dưới đây đã chạy thành công cho mã nguồn 1.1.0; phần 1.2.0/1.2.1/1.3.0 giữ kết quả lịch sử riêng. Thông tin build và kết quả chạy mới cho 1.3.1 ghi trong `BUILD_INFO.md` và phần bổ sung bên dưới; không coi kết quả cũ là kết quả bản mới. Người dùng đã nạp 1.3.0: lưu lịch mặt trời không đổi vẫn truy cập; lưu có sửa nhận ACK đã lưu rồi web/IP mất truy cập. Kế hoạch còn giữ khi khôi phục; LED/cảm ứng vẫn hoạt động. Đã có reason WiFi 2 nhưng chưa xác định nguyên nhân lần mất truy cập sau lưu; reset +/− chưa xác nhận. **Độ ổn định trên bộ đèn sau cập nhật 1.3.1 chưa xác nhận**; host/web mock không xác nhận đường WiFi/HTTP/SNTP thật hoặc cảm nhận ramp.
 
 - Sketch chẩn đoán LED_Check cũng đã build thành công cho cùng ESP32-C3/core.
 - Build thực tế ESP32-C3: PlatformIO espressif32 6.12.0, Arduino ESP32 2.0.17, NeoPixel 1.12.5, ArduinoJson 7.4.2; USB CDC bật và phân vùng OTA 4 MB.
@@ -99,6 +99,39 @@ Các thử host chỉ xác nhận thuật toán/mô hình và tương tác web. 
 
 Với A08/A09, chỉ dùng offset ±120 phút khi giờ hiện tại gần sự kiện mặt trời; nếu không, thử vào ngày/giờ thích hợp. Không giả đồng hồ để biến kiểm tra thuật toán thành kết quả phần cứng. Bảo vệ khỏi chạy bù sau clock jump được kiểm tra trên host; kết quả SNTP/ramp thật ghi riêng.
 
+## Kiểm tra bổ sung bản 1.3.1
+
+Ngày **13/10/2026**, build cuối Arduino ESP32 3.3.1 và profile PlatformIO 2.0.17 đều **PASS**; kích thước/ảnh OTA/SHA ghi trong `BUILD_INFO.md`. Ba kiểm tra C++ **network, storage, schedule_storage** chạy với cảnh báo nghiêm ngặt và ASan/UBSan **PASS**. Bộ Playwright/Chromium đầy đủ **PASS**, gồm chẩn đoán mới, whitelist không có token/mật khẩu, sao chép qua HTTP/offline, firmware cũ thiếu trường, khóa OTA và các kiểm tra lịch/ánh sáng/WiFi đã có. Rà soát nguồn tích hợp hoàn tất; không tìm thấy lỗi xác định trong thứ tự lưu kế hoạch.
+
+Phạm vi rà soát và các tiêu chí đối chiếu trên thiết bị:
+
+- SDK/core 3.3.1: AUTH_EXPIRE có thể để status cache còn `WL_CONNECTED`; wrapper disconnect không hủy kết nối xác thực khi STA connected=false. Luồng mới kiểm tra `isConnected`, liên kết driver và IP, không lấy DHCP/cache đơn lẻ làm bằng chứng online.
+- Mô hình cổng bắt đầu kết nối: driver đã rời thì chờ hữu hạn 50/150 ms rồi bắt đầu; driver vẫn liên kết thì timeout 1,5 giây; dùng API driver để hủy lần đang chạy. Kiểm tra millis tràn, không kẹt vòng lặp và timeout mở AP phục hồi.
+- Chính sách AP/thử lại: fallback 30 giây, thử lại theo chu kỳ khoảng 60 giây, AP còn dùng khi chưa online thật; quét và đổi mạng không tạo lần begin chồng nhau. AUTH_EXPIRE được mô tả đúng, không khẳng định sai mật khẩu.
+- JSON/Serial: `wifiDiagnostics` phản ánh status/liên kết/begin/pending/lỗi ngắt/sự kiện cuối, lần ngắt cuối và powerSave; `resources` ghi reset/heap/khối lớn nhất/stack. High-water mark stack phải trình bày là byte trống thấp nhất vòng đời tác vụ, không tức thời hoặc nhân 4. Log boot có lý do reset, bản tin mạng khoảng 10 giây; bỏ ngắt chủ động ASSOC_LEAVE 8 khỏi bản ghi lỗi ngắt cuối. UI tương thích khi trường chẩn đoán thiếu ở firmware cũ.
+- Lưu mặt trời: so sánh POST không đổi và có sửa, ACK/validation/ghi-readback/checkpoint; `planSaveDiagnostics` ghi thời gian, cờ ghi/đọc kiểm tra thành công và RAM/mạng trước-sau, chỉ RAM/reset sau boot, không thêm ghi NVS. Cờ Written=false khi lưu lỗi không chứng minh chưa chạm flash, vì readback có thể lỗi sau ghi. ACK stage responding, GET sau complete; successful chỉ xác nhận storage, hàm gửi HTTP trả về không chứng minh browser nhận. `disconnectError` rỗng khi hủy thành công hoặc driver không kết nối. Không quy nguyên nhân chỉ từ ACK hoặc kế hoạch giữ sau phục hồi.
+- Sao chép chẩn đoán: đúng whitelist loại session token, có WiFi/resources/plan save và hỗ trợ thiếu trường cũ; hướng dẫn thu ngay sau phục hồi trước reset, mỗi lần thử chỉ lưu một lần để giữ bản ghi liên quan.
+- Hồi quy ánh sáng, cảm ứng, NVS, tám lịch tuần, SNTP/mặt trời, draft và OTA; 14 ID/core/thư viện/phân vùng giữ như 1.3.0. Kiểm tra ảnh OTA và SHA theo `BUILD_INFO.md`.
+
+Các kiểm tra driver/mô hình không thay cho lần phục hồi trên thiết bị đã báo lỗi. Chỉ đánh dấu các ca W là Đạt khi có log/truy cập thực tế.
+
+## Chạy thử phục hồi bản 1.3.1 trên đèn
+
+| Mã | Kiểm tra | Cần đạt / cần ghi nhận | Kết quả thực tế |
+| --- | --- | --- | --- |
+| W01 | Sau boot, thả hết rồi giữ +/− đúng 5 giây | AP không mật khẩu mở, vào http://192.168.4.1; giữ đèn/favorites/kế hoạch/tên, chỉ xóa WiFi | Chưa xác nhận |
+| W02 | USB Windows với Erase All Flash Disabled, đúng core/lib/phân vùng và một nguồn USB | Upload 1.3.1 thành công; cấu hình NVS, favorites/kế hoạch/tên giữ; không dùng nguồn 5 V ngoài song song PC | Chưa thử 1.3.1 |
+| W03 | Boot và thu Serial 115200 ít nhất 30 giây | Thấy phiên bản/lý do reset, log mạng khoảng 10 giây; IP/hostname/trạng thái thực đối chiếu được | Chưa thử 1.3.1 |
+| W04 | Mạng nhà ngắt/khôi phục; nếu AUTH_EXPIRE tái hiện, ghi reason/status/association | Đèn nhận offline thật dù cache còn connected; thử lại và mở AP đúng hạn; không kẹt chờ cache | Chưa thử 1.3.1 |
+| W05 | Router còn DHCP lease nhưng đèn không liên kết | Không báo online chỉ vì IP/status cũ; AP dùng được khi mất mạng đủ thời gian | Chưa thử 1.3.1 |
+| W06 | Kết nối nhà phục hồi, dùng IP hiện tại và `.local` | IP/web mở, AP tắt khi online thật; mDNS giữ thuật toán, không nhầm lease cũ với IP đang dùng | Chưa thử 1.3.1 |
+| W07 | Chẩn đoán/copy và giao diện lúc mạng ổn/lỗi | WiFi/resources/plan save đúng; bản sao không có session token; thông báo/online đúng, không phát lại POST cũ | Chưa thử 1.3.1 |
+| W08 | Bật/tắt/cảm ứng, 14 mode/favorites và kế hoạch sau phục hồi | Ánh sáng/config/lịch/TP.HCM giữ; SNTP chờ/holdover/no catch-up theo quy tắc đã có | Chưa thử 1.3.1 |
+| W09 | Lưu lại lịch mặt trời không đổi một lần, chờ GET cập nhật | ACK/storage đúng, HTTP/IP vẫn truy cập; copy checkpoint/flags/RAM/mạng làm mẫu đối chiếu | Chưa thử 1.3.1 |
+| W10 | Sửa một giá trị lịch mặt trời, lưu một lần rồi đọc/copy sau phản hồi hoặc phục hồi | ACK và dữ liệu đúng, HTTP/IP vẫn dùng; ghi checkpoint/thời điểm/lý do ngắt nếu lỗi; copy trước reset, so sánh W09 | Chưa thử 1.3.1 |
+
+Nếu W01 vẫn không có AP, dùng nạp USB theo mục 11 của `HUONG_DAN.md`; không cần web để nạp sketch. Khi thu log chỉ cấp một nguồn USB. Kết quả router/AP/HTTP/SNTP phải ghi riêng với kết quả build hoặc test trên host.
+
 ## Bảng chạy thử trên thiết bị
 
 Ghi Ngày / Kết quả / Ghi chú cho từng dòng. Các ca nền T/N/O giữ lại để bổ sung kết quả cụ thể; trạng thái chưa ghi kết quả không phủ nhận việc người dùng đã lắp và dùng đèn. Mục tiêu về thời gian cần đo trên mạng thực tế.
@@ -164,4 +197,4 @@ node tests/web_test.cjs
 
 Kiểm tra web cần package Playwright và Chromium. Đặt biến `DECO_BROWSER` bằng đường dẫn executable nếu Chromium không ở `/usr/bin/chromium`. Ảnh chụp web từ mock chỉ minh họa UI, không là bằng chứng thiết bị đã chạy.
 
-Người dùng đã lắp và thử 1.2.0, có phản hồi chuyển màu/Lấp lánh; bảng nền chưa có kết quả từng ca để đánh dấu Đạt. Bản 1.3.0 ưu tiên A01–A12 trên ESP/router thật, đồng thời giữ F01–F04 để ghi kết quả ánh sáng khi thử lại.
+Người dùng đã nạp 1.3.0 và báo mất truy cập sau khi thay đổi/lưu lịch mặt trời, còn lần lưu không đổi vẫn dùng được; bảng nền chưa có kết quả từng ca để đánh dấu Đạt. Bản 1.3.1 ưu tiên W01–W10 trên bộ đèn đó, đồng thời giữ A01–A12 và F01–F04 để ghi kết quả lịch/ánh sáng khi thử lại.

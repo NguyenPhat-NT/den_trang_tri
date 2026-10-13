@@ -1,4 +1,4 @@
-# Hướng dẫn Đèn Deco 1.3.0
+# Hướng dẫn Đèn Deco 1.3.1
 
 Ngày bàn giao: 12/10/2026. Dành cho Windows và Arduino IDE.
 
@@ -50,7 +50,7 @@ TTP223 phải cho OUT cao khi chạm và thấp khi thả. Nếu module đang to
 
 ## 3. Nạp lần đầu bằng Arduino IDE trên Windows
 
-1. Giải nén cả gói; giữ `DenDeco.ino`, `Config.h`, `Core.h`, `NetworkPolicy.h`, `Storage.h`, `WebUI.h` trong cùng thư mục `DenDeco`.
+1. Giải nén cả gói; giữ nguyên toàn bộ thư mục `DenDeco`, gồm `DenDeco.ino` và các header `Config.h`, `Core.h`, `NetworkPolicy.h`, `Storage.h`, `WebUI.h`, `Schedule.h`, `Solar.h`, `Automation.h`, `ScheduleStorage.h`.
 2. Trong Boards Manager, giữ/cài **esp32 by Espressif Systems 3.3.1** như bộ IDE bạn đang dùng. Nếu IDE chưa có nguồn package, thêm URL sau vào Preferences → Additional Boards Manager URLs:
 
 ```text
@@ -77,7 +77,7 @@ https://espressif.github.io/arduino-esp32/package_esp32_index.json
 7. Bấm Verify rồi Upload. Nếu không nhận COM, giữ BOOT, bấm/thả RESET rồi thả BOOT; chọn lại COM và nạp. Các bo có thể ghi nút là B/BOOT và R/RESET.
 8. Sau nạp, bấm RESET nếu cần. Mở Serial Monitor **115200 baud**. Lần đầu chưa có bản lưu, đèn ở trạng thái tắt.
 
-Bộ core/thư viện người dùng đang có là ESP32 3.3.1, NeoPixel 1.15.5 và ArduinoJson 7.4.3; giữ bộ này để biên dịch. Thông tin build và file OTA 1.3.0 ghi trong `BUILD_INFO.md`. Profile PlatformIO 2.0.17 là phương án build bổ sung; không cần đổi bộ Arduino IDE hiện tại về phiên bản đó. Người dùng đã lắp và thử bản 1.2.0; các tính năng giờ/lịch của 1.3.0 mới cần thử trên bo thực tế. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
+Bộ core/thư viện người dùng đang có là ESP32 3.3.1, NeoPixel 1.15.5 và ArduinoJson 7.4.3; giữ bộ này để biên dịch. Thông tin build và file OTA 1.3.1 ghi trong `BUILD_INFO.md`. Profile PlatformIO 2.0.17 là phương án build bổ sung; không cần đổi bộ Arduino IDE hiện tại về phiên bản đó. Người dùng đã nạp 1.3.0 và báo lỗi WiFi/web; cần xác nhận phục hồi 1.3.1 trên bo thực tế. Nếu bo có dung lượng flash khác 4 MB, chỉnh cấu hình và biên dịch lại cho bo thực tế.
 
 ## 4. Kết nối web lần đầu
 
@@ -88,7 +88,7 @@ Khi chưa có WiFi đã lưu, ESP mở AP tên `DenDeco-XXXXXX`, **không có m�
 3. Mở **Cài đặt & kết nối → Quét WiFi xung quanh**. Đợi kết quả rồi chọn mạng để điền tên WiFi. ESP32-C3 chỉ quét và kết nối **2,4 GHz**; với mạng ẩn, nhập đúng SSID thủ công. Trang báo đang quét, danh sách tìm thấy hoặc lỗi để thử lại. Quét chạy bất đồng bộ; hiệu ứng và cảm ứng tiếp tục hoạt động, nhưng thời gian phản hồi qua mạng cần kiểm chứng trên bo thật.
 4. Nhập mật khẩu WiFi nhà rồi bấm **Lưu & kết nối**. Để trống mật khẩu với cùng SSID sẽ giữ mật khẩu đang lưu; chỉ chọn **Mạng không có mật khẩu** nếu mạng nhà là mạng mở. Mật khẩu đã lưu không được gửi lại cho trình duyệt.
 5. Theo dõi trạng thái kết nối trên trang. **Ngay khi đèn kết nối WiFi nhà và nhận IP từ DHCP, AP tự tắt**, nên trang đang mở qua AP sẽ mất kết nối. Chuyển điện thoại/PC về WiFi nhà và mở **http://den-deco.local**, hoặc địa chỉ đã chỉnh trước đó.
-6. Nếu kết nối thất bại sau **30 giây**, AP dự phòng mở để sửa mạng/mật khẩu. Nếu router mất kết nối, đèn thử nối lại và mở AP sau 30 giây chưa khôi phục; khi nhận IP WiFi nhà trở lại, AP tự tắt ngay. Điều khiển cảm ứng vẫn dùng được trong lúc đèn thử kết nối.
+6. Nếu kết nối thất bại sau **30 giây**, AP dự phòng mở để sửa mạng/mật khẩu. Nếu router mất kết nối, đèn thử nối lại và mở AP sau 30 giây chưa khôi phục; khi liên kết với router và nhận IP WiFi nhà trở lại, AP tự tắt ngay. Khi lỗi kéo dài, chu kỳ thử lại khoảng **60 giây**; nếu bước hủy kết nối driver bị kẹt, firmware có thể mở AP sớm hơn để giữ đường cấu hình. Điều khiển cảm ứng vẫn dùng được trong lúc đèn thử kết nối.
 
 AP chỉ mở khi chưa cấu hình WiFi nhà, khi không kết nối được trong 30 giây hoặc khi bạn xóa/reset WiFi để cấu hình lại. AP không bật thường trực khi WiFi nhà hoạt động. Có thể xóa mạng từ web bằng **Xóa WiFi đã lưu**, hoặc giữ đúng **+ và − đồng thời 5 giây** như mục 5.
 
@@ -97,6 +97,8 @@ AP chỉ mở khi chưa cấu hình WiFi nhà, khi không kết nối được t
 Với nhiều đèn trên cùng mạng, đặt **tên truy cập khác nhau** cho từng đèn. Khi mDNS phát hiện trùng tên, firmware tự thêm mã bo sáu ký tự viết thường vào địa chỉ đang dùng, ví dụ `http://den-deco-a1b2c3.local`; nếu vẫn trùng, thêm tiếp `-2`, `-3`… Đèn giữ nguyên tên truy cập bạn đã lưu và chỉ thay tên thực tế của phiên kết nối, nên địa chỉ sau khi kết nối lại có thể thay đổi. Dùng địa chỉ trong **Địa chỉ trong WiFi nhà** hoặc Serial Monitor, không suy ra địa chỉ từ ô tên đã lưu. Cơ chế trùng tên còn cần thử với nhiều đèn thật; địa chỉ IP là cách truy cập dự phòng.
 
 Địa chỉ `.local` dùng mDNS và chỉ có hiệu lực trong mạng nội bộ có hỗ trợ; điện thoại/PC phải ở cùng mạng với đèn. Mạng khách có cách ly thiết bị, router chặn multicast hoặc máy chưa hỗ trợ mDNS có thể không mở được địa chỉ này. Khi đó xem IP trong Serial Monitor 115200 baud hoặc danh sách DHCP của router rồi mở `http://<IP-của-đèn>`. IP phụ thuộc router; có thể đặt DHCP reservation theo MAC nếu muốn giữ IP ổn định.
+
+IP còn nằm trong danh sách DHCP của router chỉ cho biết router đã cấp địa chỉ trước đó, không chứng minh đèn đang online. Nếu cả `.local` và IP đều không mở, dùng quy trình phục hồi ở mục 11; chỉ lỗi tên `.local` còn IP mở được mới giúp tách riêng vấn đề phân giải tên.
 
 ## 5. Sử dụng bốn nút
 
@@ -216,7 +218,7 @@ Mỗi phút sự kiện chỉ được quyết định một lần theo thứ t�
 - **Lịch tuần một phút:** đợi trang có giờ đồng bộ, lưu Mục 1, đặt một dòng bật cho hôm nay ở phút kế tiếp và một dòng tắt một phút sau đó. Lưu trước giờ bật, giữ trang mở để đối chiếu giờ và trạng thái. Nếu đã sang phút bật lúc lưu, đặt lại sang phút sau; không sửa đồng hồ để ép chạy.
 - **Giữ giờ khi mất WiFi:** sau khi đã đồng bộ, đặt lịch tương lai rồi tắt router; kiểm tra giờ tiếp tục chạy và sự kiện đến đúng phút. Bật router lại, kiểm tra đồng bộ/khôi phục. Reboot khi không có Internet phải chờ giờ mới, không chạy bù lịch cũ.
 - **Bình minh thử ngắn:** bật bình minh cho hôm nay, chọn màu ấm có sẵn và thời lượng 1 phút. Dùng độ lệch ±120 phút để dời giờ mặt trời mọc sang một phút tương lai nếu thời điểm hiện tại nằm trong phạm vi đó; nếu không, thử gần giờ mọc ngày tiếp theo. Giữ đồng hồ thực; không giả giờ và không dùng chế độ mô phỏng để xác nhận phần cứng. Sau thử trả thời lượng/độ lệch về giá trị dùng hằng ngày.
-- **OTA giữ kế hoạch:** lưu các dòng/tọa độ, thực hiện OTA 1.3.0 rồi kiểm tra lại. Đợi SNTP đồng bộ sau reboot và đặt một sự kiện tương lai mới; sự kiện bị lỡ trong OTA không được chạy bù.
+- **OTA giữ kế hoạch:** lưu các dòng/tọa độ, thực hiện OTA 1.3.1 rồi kiểm tra lại. Đợi SNTP đồng bộ sau reboot và đặt một sự kiện tương lai mới; sự kiện bị lỡ trong OTA không được chạy bù.
 
 ## 8. Lưu trạng thái
 
@@ -228,21 +230,21 @@ Rút nguồn trước 10 giây sẽ mất phần chỉnh chưa lưu. Hiệu ứn
 
 Firmware có hai bản NVS, CRC và số thế hệ; boot chọn bản hợp lệ mới nhất. Khi ghi lỗi, giữ RAM và thử lại sau 5 giây. Khi gặp schema mới hơn, không tự ghi đè bằng firmware cũ.
 
-Bản 1.3.0 tiếp tục đọc dữ liệu ánh sáng schema 1 và 2, ghi schema 2 như bản 1.2.x. Nâng cấp OTA từ 1.2.x giữ cấu hình đèn, cả 14 mã chế độ, ba mục yêu thích, WiFi, tên và tên truy cập. Kế hoạch tuần/bình minh/mặt trời lặn và tọa độ lưu riêng trong namespace NVS `deco-plan`; không đổi schema ánh sáng. Nâng cấp từ 1.1.0 giữ các cấu hình/mục yêu thích cũ vì sáu mã chế độ đầu không đổi. Nếu cần quay lại 1.1.0 sau khi dữ liệu đã lưu schema 2, dùng USB: firmware cũ có thể không đọc được schema mới và sẽ không ghi đè dữ liệu đó.
+Bản 1.3.1 tiếp tục đọc dữ liệu ánh sáng schema 1 và 2, ghi schema 2 như bản 1.2.x/1.3.0. Nâng cấp từ 1.3.0 giữ cấu hình đèn, cả 14 mã chế độ, ba mục yêu thích, WiFi, tên và tên truy cập. Kế hoạch tuần/bình minh/mặt trời lặn và tọa độ lưu riêng trong namespace NVS `deco-plan`; không đổi schema ánh sáng. Nạp USB với Erase All Flash Disabled và giữ bảng phân vùng để giữ NVS. Nâng cấp từ 1.2.x/1.1.0 giữ dữ liệu cũ; nếu cần quay lại 1.1.0 sau khi dữ liệu đã lưu schema 2, dùng USB: firmware cũ có thể không đọc được schema mới và sẽ không ghi đè dữ liệu đó.
 
 ## 9. Cập nhật OTA
 
 Lần nạp đầu tiên vẫn qua USB để có firmware và bảng phân vùng OTA. Sau đó dùng web qua WiFi nhà hoặc AP:
 
 1. Trong Arduino IDE, giữ nguyên board 4 MB và Partition Scheme có OTA; chọn Sketch → Export Compiled Binary.
-2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.3.0-ota.bin`; dùng để nâng cấp đèn đang chạy 1.2.x hoặc 1.1.0.
+2. Tìm file ứng dụng **DenDeco.ino.bin** hoặc tên tương đương do IDE xuất. Không chọn `.bootloader.bin`, `.partitions.bin`, `.merged.bin` hoặc file dùng cho ESP32/S2/S3 khác. Gói bàn giao cũng có `firmware/DenDeco-1.3.1-ota.bin`; dùng để nâng cấp khi web vẫn truy cập được. Nếu cả IP/AP đều không mở, nạp sketch qua USB theo mục 11.
 3. Mở Cập nhật firmware qua WiFi trên web, chọn file, bấm Cập nhật firmware và xác nhận.
 4. Firmware lưu ngay các thay đổi đang chờ trước khi bắt đầu OTA, thay vì chờ 10 giây trong phiên bảo trì này. Khi lưu không thành công hoặc schema không hỗ trợ, OTA chưa bắt đầu.
 5. Giữ nguồn và kết nối ổn định. Ánh sáng giữ khung hình hiện tại; cảm ứng, hiệu ứng và xử lý hẹn giờ tạm dừng trong lúc upload; bộ đếm thời gian chạy vẫn trôi. Không dùng điều khiển bình thường cho tới khi hoàn tất.
 6. File được ghi vào phân vùng ứng dụng còn lại, kiểm tra kích thước, header/chip ESP32-C3, dấu ứng dụng và kiểm tra ảnh của thư viện Update. Khi hợp lệ, đèn trả thành công rồi khởi động lại sau khoảng 1,8 giây. Trang thử đồng bộ lại sau khoảng 7 giây.
 7. Đèn khôi phục trạng thái đã lưu, tên/tên truy cập và WiFi. Hẹn giờ không tiếp tục sau khởi động, giống quy tắc mất điện. Nếu đang OTA qua AP và đã lưu WiFi nhà hợp lệ, sau reboot đèn nối mạng nhà rồi tắt AP; chuyển điện thoại/PC về mạng nhà và mở địa chỉ `.local` hoặc IP.
 
-Giới hạn của phân vùng ứng dụng mặc định là 1.310.720 byte; kích thước file 1.3.0 được ghi trong `BUILD_INFO.md`. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
+Giới hạn của phân vùng ứng dụng mặc định là 1.310.720 byte; kích thước file 1.3.1 được ghi trong `BUILD_INFO.md`. Nếu dùng sơ đồ phân vùng khác, giới hạn trên trang lấy từ phân vùng thực tế. Đổi bảng phân vùng phải nạp USB; OTA chỉ thay ứng dụng.
 
 Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, ứng dụng đang chạy vẫn được giữ. Nếu mất điện sau khi đã ghi firmware hợp lệ và chọn boot, lần bật sau có thể chạy firmware mới. Nếu firmware mới hợp lệ về định dạng nhưng có lỗi chạy, bản này chưa có rollback tự động sau boot; khôi phục bằng USB. Phiên OTA kiểm tra token và cùng origin; dùng trong mạng nội bộ, không mở cổng điều khiển ra Internet. Bản này chưa xác minh chữ ký số firmware.
 
@@ -261,4 +263,68 @@ Nếu upload bị ngắt hoặc file bị từ chối trước khi hoàn tất, 
 
 Không thấy AP: đợi 30 giây nếu đã lưu mạng; nếu WiFi nhà đang kết nối, AP đã tắt đúng thiết kế. Muốn cấu hình lại từ cảm ứng, giữ đúng +/− 5 giây sau khi đã khởi động và thả hết nút. AP không yêu cầu mật khẩu. Trang AP mất kết nối ngay sau Lưu & kết nối: chuyển sang WiFi nhà và mở `.local` hoặc IP. Không mở được `.local`: kiểm tra cùng mạng, tên truy cập và dùng IP từ router/Serial. Không thấy mạng khi quét: xác nhận mạng 2,4 GHz, thử lại hoặc nhập SSID thủ công. Đèn chạm tự bật: kiểm tra module direct active high, dây và vùng cảm ứng/vỏ. OTA báo file sai: chọn đúng ứng dụng `.ino.bin`, không dùng bootloader/merged.
 
-Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. Người dùng đã thử bản 1.2.0 trên đèn, có phản hồi chuyển màu/Lấp lánh. **Giờ SNTP, lịch tuần, bình minh và mặt trời lặn của bản 1.3.0 mới cần thử trên bo thật**; mô phỏng không xác nhận đường mạng SNTP hoặc độ sáng cảm nhận. Sau nâng cấp, ưu tiên các ca A01–A12, giữ các ca ánh sáng/nguồn/cảm ứng để bổ sung kết quả; ghi kết quả trong `KIEM_THU.md`.
+Thông tin biên dịch và kiểm tra logic/giao diện bằng mô phỏng được ghi trong `BUILD_INFO.md` và `KIEM_THU.md`. Người dùng đã nạp 1.3.0: lưu lại lịch mặt trời không đổi vẫn dùng được; đổi lịch rồi lưu nhận thông báo đã lưu, sau đó web/IP mất truy cập. Khi truy cập khôi phục, kế hoạch vẫn còn; LED/cảm ứng vẫn chạy. Chưa xác định nguyên nhân mất truy cập sau lưu hoặc kết quả reset +/−. **Độ ổn định sau cập nhật 1.3.1 cần thử trên bộ đèn này**; các ca SNTP/lịch/mặt trời chưa có kết quả riêng. Khi web đang dùng được, có thể cập nhật OTA; nếu mất web/AP, dùng mục 11. Sau nạp, ưu tiên W01–W10, giữ A01–A12 và các ca ánh sáng/nguồn/cảm ứng để bổ sung kết quả.
+
+## 11. Phục hồi khi web và AP không truy cập được
+
+### Kiểm tra AP từ cảm ứng
+
+Đợi đèn khởi động, thả hết bốn nút rồi giữ đúng **+ và − đồng thời 5 giây**. Thả cả hai sau khi giữ đủ thời gian, tìm AP **DenDeco-XXXXXX** bằng điện thoại/PC. Thao tác này chỉ xóa SSID/mật khẩu WiFi nhà; giữ cấu hình ánh sáng, mục yêu thích, kế hoạch, tên và hostname. Nếu thấy AP, nối không mật khẩu và mở **http://192.168.4.1**. Có thể cập nhật file OTA 1.3.1 khi trang hoạt động hoặc nhập lại WiFi nhà sau khi cập nhật.
+
+Nếu không thấy AP hoặc không mở được trang AP, tiếp tục nạp USB. Việc IP còn xuất hiện trong router và LED/cảm ứng vẫn hoạt động chưa đủ để xác nhận đường HTTP/WiFi đang online. Khi cả tên `.local` và IP đều lỗi, chưa thể kết luận lỗi DNS, mật khẩu đã lưu hay firmware OTA bị hỏng.
+
+### Nạp lại bằng Arduino IDE trên Windows, giữ NVS
+
+1. Tải **DenDeco-1.3.1.zip**, giải nén cả gói và mở `DenDeco/DenDeco.ino` cùng toàn bộ header. File `.bin` OTA là ảnh ứng dụng cho web; lần phục hồi USB này dùng chức năng Upload sketch của Arduino IDE.
+2. Giữ core **esp32 by Espressif Systems 3.3.1**, **Adafruit NeoPixel 1.15.5**, **ArduinoJson 7.4.3**. Chọn **ESP32C3 Dev Module**, **USB CDC On Boot = Enabled**, flash **4 MB** nếu đúng bo và **Partition Scheme = Default 4MB with spiffs** có OTA. Giữ bảng phân vùng đang dùng; **Erase All Flash Before Sketch Upload = Disabled** để giữ cấu hình NVS.
+3. Tắt đèn bằng cảm ứng và chờ ít nhất 10 giây nếu có thay đổi ánh sáng cần lưu. Tháo nguồn 5 V hằng ngày và nguồn 5 V ngoài khác trước khi nối cáp dữ liệu USB-C từ PC. **Chỉ dùng một nguồn USB khi nạp hoặc xem Serial**, không cấp đồng thời 5 V ngoài vào bo với USB PC. Nếu cần tránh tải LED trên USB PC, tháo dây +5V LED khi đã ngắt nguồn rồi chỉ nạp bo.
+4. Chọn COM, bấm **Verify** rồi **Upload**. Nếu chưa có COM, giữ BOOT, bấm/thả RESET rồi thả BOOT; chọn lại COM và nạp. Không bật Erase All Flash để xử lý lỗi kết nối.
+5. Sau Upload, mở **Serial Monitor 115200 baud**, rồi bấm RESET nếu cần để xem từ dòng khởi động. Giữ cáp USB PC là nguồn duy nhất khi thu log. Firmware 1.3.1 in phiên bản/lý do reset, sự kiện STA/lần bắt đầu kết nối và bản tin mạng khoảng mỗi 10 giây: online, status, liên kết router, IP, AP, hostname, heap và uptime. Log không in mật khẩu.
+6. Nếu WiFi nhà được giữ và kết nối lại, mở IP **hiện tại** từ Serial hoặc địa chỉ `.local` hiện tại. Nếu chưa kết nối được, kiểm tra AP sau 30 giây; AP có thể mở sớm hơn khi bước hủy driver bị kẹt. Sau khi xác nhận web hoạt động, tháo USB PC, nối lại nguồn/LED khi đã ngắt điện rồi dùng nguồn 5 V–2 A hằng ngày.
+7. Kiểm tra lại cấu hình đèn, ba mục yêu thích, kế hoạch/tọa độ và tên. Nếu đã reset WiFi bằng +/−, nhập lại mạng nhà; giữ các cấu hình còn lại. Phục hồi thực tế được ghi ở bảng W01–W08, không suy ra thành công chỉ từ thông báo biên dịch/Upload.
+
+### Đọc thông tin chẩn đoán
+
+Lý do WiFi **2 = AUTH_EXPIRE** cho biết trạng thái xác thực đã hết hiệu lực; thông báo này **không tự chứng minh mật khẩu đã lưu sai**. Với core 3.3.1, trạng thái cache có thể còn báo `WL_CONNECTED` sau sự kiện này, trong khi driver không còn liên kết thực với router. IDF thường xóa IP khi ngắt, nên riêng reason 2/cache cũ chưa chứng minh vì sao AP không xuất hiện. Bản 1.3.1 kiểm tra cả `isConnected`, liên kết driver và IP, rồi hủy lần kết nối driver đang chờ trước khi bắt đầu lần mới; AP dự phòng được quyết định theo trạng thái thực này.
+
+Khi web đã truy cập được, mở **Thông tin chẩn đoán kết nối** trong cài đặt mạng để đọc thông tin nâng cao. JSON ở **http://<IP-hiện-tại>/api/state** có đối tượng **wifiDiagnostics** để đối chiếu với log Serial:
+
+| Trường | Ý nghĩa |
+| --- | --- |
+| `status` | Mã trạng thái cache Arduino, chỉ là thông tin quan sát |
+| `interfaceReady` | Cờ `isConnected` của giao diện STA |
+| `associated` | Driver hiện còn liên kết vật lý với router |
+| `beginResult` | Kết quả số của lần begin cuối; −1 khi chưa gọi |
+| `beginAttempts` | Số lần bắt đầu kết nối trong phiên chạy |
+| `pending` | Đang chờ bước bắt đầu kết nối mới |
+| `cancelTimedOut` | Bước hủy/chờ rời liên kết đã hết thời hạn |
+| `disconnectError` | Lỗi từ API hủy kết nối driver; rỗng khi thành công hoặc driver đã không kết nối |
+| `lastEvent` | Mã sự kiện WiFi cuối được ghi nhận |
+| `lastDisconnectReason`, `lastDisconnectAtMs` | Lý do và thời điểm ms từ boot của lần ngắt được ghi gần nhất; bỏ qua ASSOC_LEAVE 8 do chủ động rời mạng |
+| `disconnectCount` | Số lần ngắt được ghi trong phiên chạy, không tính lần chủ động rời nói trên |
+| `powerSave` | Mã chế độ tiết kiệm WiFi đang dùng; −1 nếu không đọc được |
+
+Mã cache, IP hoặc `beginResult` đơn lẻ không được dùng để kết luận online/thất bại. Đặc biệt, **beginResult = 4 không tự xác nhận lần kết nối mới đã thất bại** vì core có thể trả lại giá trị cache cũ. Đọc cùng `interfaceReady`, `associated`, IP hiện tại và trạng thái mạng trên trang. Ghi lại các bản tin trước/sau mất liên lạc để phân biệt lỗi driver, mạng và reset thiết bị.
+
+Đối tượng **resources** ghi lý do reset (`resetReason`), heap đang trống (`freeHeap`), mức heap trống thấp nhất (`minFreeHeap`), khối heap trống lớn nhất (`largestFreeBlock`) và stack còn trống thấp nhất của loop (`loopStackFree`). Các giá trị bộ nhớ dùng **byte**. `loopStackFree` và `planSaveDiagnostics.stackFree` là mức thấp nhất còn trống trong vòng đời tác vụ theo ESP-IDF, không phải lượng stack trống tức thời và **không nhân thêm 4**.
+
+Đối tượng **planSaveDiagnostics** ghi lần lưu lịch gần nhất:
+
+| Nhóm trường | Ý nghĩa |
+| --- | --- |
+| `kind`, `stage`, `count` | Loại lịch, checkpoint hiện tại và số lần lưu trong phiên |
+| `startedAtMs`, `totalMs` | Mốc ms từ boot và thời gian xử lý đã ghi nhận |
+| `lightMs`, `planMs`, `applyMs`, `responseMs` | Thời gian lưu ánh sáng, lưu kế hoạch, áp dụng và gọi hàm gửi phản hồi trên ESP |
+| `successful`, `lightWritten`, `planWritten` | Bước lưu/kiểm tra storage thành công; hai cờ Written ghi nhận lần ghi ánh sáng/kế hoạch đã đọc kiểm tra thành công |
+| `heapBefore`, `heapAfter`, `stackFree` | Heap trước/sau và mức stack trống thấp nhất của loop |
+| `onlineBefore/After`, `associatedBefore/After`, `interfaceBefore/After`, `ipBefore/After` | Trạng thái online, liên kết driver, giao diện STA và IP trước/sau lưu |
+
+Phản hồi lưu có thể ghi stage **responding**; lần cập nhật trạng thái kế tiếp mới thấy **complete**. `successful=true` xác nhận bước lưu/kiểm tra storage đã thành công; hai cờ Written chỉ được bật khi lần ghi đã đọc kiểm tra thành công. Khi một lần lưu lỗi, cờ Written=false vẫn có thể đã ghi flash nhưng đọc kiểm tra thất bại. `complete`/`responseMs` chỉ ghi hàm gửi phản hồi phía ESP đã trả về, không xác nhận trình duyệt nhận được dữ liệu. Các bản ghi chẩn đoán chỉ nằm trong **RAM của phiên chạy**, mất khi reboot và không tạo thêm ghi NVS.
+
+Để lấy bằng chứng lỗi sau **Lưu lịch mặt trời**:
+
+1. Khi web truy cập lại, mở **Cài đặt & kết nối → Thông tin chẩn đoán kết nối → Sao chép chẩn đoán** trước khi reset nguồn. Bản sao dùng các trường được chọn sẵn, không chứa session token; tránh sao chép toàn bộ `/api/state` để chia sẻ.
+2. Nếu tái thử, lưu lịch **không đổi một lần**, đợi một lần cập nhật trạng thái sau phản hồi rồi sao chép chẩn đoán.
+3. Đổi **một giá trị** của lịch mặt trời, lưu **một lần** và thu bản sao/log Serial sau phản hồi hoặc ngay khi web trở lại. Không bấm lưu liên tục. Ghi thông báo, khả năng truy cập IP/AP và kế hoạch sau khi khôi phục để so sánh hai lần.
+
+Kế hoạch còn giữ chứng minh dữ liệu đã phục hồi được; chưa đủ để quy nguyên nhân mất truy cập cho NVS, WiFi hoặc HTTP. Đối chiếu checkpoint/thời gian lưu, bộ nhớ và thời điểm/lý do ngắt mạng để tiếp tục xác định nguyên nhân.

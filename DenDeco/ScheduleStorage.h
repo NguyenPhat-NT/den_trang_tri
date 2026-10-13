@@ -111,9 +111,9 @@ class ScheduleStorage {
   return read(key,check,checkGeneration)==Record::Valid&&check==payload&&checkGeneration==(gen&0xffffffu);
  }
  public:
- bool blocked=false,hasSaved=false;String error;
+ bool blocked=false,hasSaved=false;String error;uint32_t writes=0;
  bool begin(ScheduleConfig& schedules,SolarConfig& sun){
-  blocked=false;hasSaved=false;slot=-1;generation=0;saved=String();error=String();
+  blocked=false;hasSaved=false;writes=0;slot=-1;generation=0;saved=String();error=String();
   opened=prefs.begin("deco-plan",false);
   if(!opened){error="Không mở được NVS lịch";return false;}
   String a,b;uint32_t ga=0,gb=0;ScheduleConfig sa,sb;SolarConfig ua,ub;
@@ -140,7 +140,7 @@ class ScheduleStorage {
   if(hasSaved&&text==saved){error=String();return true;}
   int next=slot==0?1:0;uint32_t nextGeneration=(generation+1)&0xffffffu;
   if(!write(next==0?"slot-a":"slot-b",text,nextGeneration)){error="Ghi hoặc kiểm tra NVS lịch thất bại";return false;}
-  slot=next;generation=nextGeneration;saved=text;hasSaved=true;error=String();return true;
+  slot=next;generation=nextGeneration;saved=text;hasSaved=true;++writes;error=String();return true;
  }
 };
 }

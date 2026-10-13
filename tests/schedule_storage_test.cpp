@@ -98,12 +98,12 @@ static void testStorage(){
  fakeNVS=FakeNVS{};ScheduleConfig defaults;SolarConfig defaultSun;ScheduleStorage fresh;
  assert(fresh.begin(defaults,defaultSun)&&!fresh.hasSaved&&!fresh.blocked&&fresh.error.length()==0);
  const auto initial=fakeNVS.data;assert(!fakeNVS.data["deco-plan/slot-a"].size());
- ScheduleConfig first=weekly();SolarConfig sun=solar();assert(fresh.save(first,sun)&&fresh.hasSaved);
+ ScheduleConfig first=weekly();SolarConfig sun=solar();assert(fresh.save(first,sun)&&fresh.hasSaved&&fresh.writes==1);
  assert(get32(fakeNVS.data["deco-plan/slot-a"].data()+4)==(1u<<8|1u));
  const auto firstBytes=fakeNVS.data;
- assert(fresh.save(first,sun)&&fakeNVS.data==firstBytes); // No flash write for unchanged data.
+ assert(fresh.save(first,sun)&&fakeNVS.data==firstBytes&&fresh.writes==1); // No flash write for unchanged data.
  ScheduleConfig second=first;second.entries[0].minute=59;SolarConfig secondSun=sun;secondSun.latitudeE6=10776000;
- assert(fresh.save(second,secondSun));assert(get32(fakeNVS.data["deco-plan/slot-b"].data()+4)==(2u<<8|1u));
+ assert(fresh.save(second,secondSun)&&fresh.writes==2);assert(get32(fakeNVS.data["deco-plan/slot-b"].data()+4)==(2u<<8|1u));
  ScheduleConfig loaded;SolarConfig loadedSun;ScheduleStorage restore;
  assert(restore.begin(loaded,loadedSun)&&restore.hasSaved&&!restore.blocked&&loaded==second&&loadedSun==secondSun);
  const auto goodData=fakeNVS.data;
@@ -112,8 +112,8 @@ static void testStorage(){
  SolarConfig invalidSun=secondSun;invalidSun.dawn.minutes=0;
  assert(!restore.save(second,invalidSun)&&fakeNVS.data==goodData);
  ScheduleConfig third=second;third.entries[0].minute=60;
- fakeNVS.failWrite=true;assert(!restore.save(third,secondSun)&&fakeNVS.data==goodData&&restore.error.length()>0);fakeNVS.failWrite=false;
- fakeNVS.corruptWrite=true;assert(!restore.save(third,secondSun)&&restore.error.length()>0);fakeNVS.corruptWrite=false;
+ fakeNVS.failWrite=true;assert(!restore.save(third,secondSun)&&fakeNVS.data==goodData&&restore.error.length()>0&&restore.writes==0);fakeNVS.failWrite=false;
+ fakeNVS.corruptWrite=true;assert(!restore.save(third,secondSun)&&restore.error.length()>0&&restore.writes==0);fakeNVS.corruptWrite=false;
  // A write that reports success but fails CRC readback never replaces the
  // known-good slot. Reboot recovers the most recent verified record.
  ScheduleConfig recovered;SolarConfig recoveredSun;ScheduleStorage afterCorrupt;

@@ -13,7 +13,7 @@ const path = require('path');
   modeIds.forEach((name, id) => assert(new RegExp('\\b' + name + '\\s*=\\s*' + id + '\\b').test(core), 'Firmware mode ID drift: ' + name));
   assert(!/<(?:script|link)\b[^>]*(?:src|href)=["']https?:\/\//i.test(html), 'UI/help must be self-contained');
   const s = {
-    version: '1.3.0', name: 'Đèn Deco', token: 'test-session', revision: 0,
+    version: '1.3.1', name: 'Đèn Deco', token: 'test-session', revision: 0,
     power: false, light: { mode: 0, r: 255, g: 96, b: 24, brightness: 5, speed: 50 },
     sleepBrightness: 5, cap: 30, ledCount: 20,
     favorites: Array.from({ length: 3 }, () => ({ valid: false, light: { mode: 0, brightness: 5 } })),
@@ -22,6 +22,10 @@ const path = require('path');
     apActive: false, apSSID: 'DenDeco-TEST', hostname: 'den-deco', requestedHostname: 'den-deco',
     localUrl: 'http://den-deco.local', mdnsReady: true,
     networkStatus: 'connected', networkMessage: 'Đã kết nối WiFi nhà.', disconnectReason: 0,
+    wifiDiagnostics: { status: 3, interfaceReady: true, associated: true, beginResult: 6, beginAttempts: 1, pending: false, cancelTimedOut: false, disconnectError: '', lastEvent: 7, lastDisconnectReason: 0, lastDisconnectAtMs: 0, disconnectCount: 0, powerSave: 0 },
+    resources: { resetReason: 1, freeHeap: 220000, minFreeHeap: 210000, largestFreeBlock: 150000, loopStackFree: 3800 },
+    planSaveDiagnostics: { kind: '', stage: 'idle', count: 0, startedAtMs: 0, totalMs: 0, lightMs: 0, planMs: 0, applyMs: 0, responseMs: 0, successful: false, lightWritten: false, planWritten: false, onlineBefore: false, onlineAfter: false, associatedBefore: false, associatedAfter: false, interfaceBefore: false, interfaceAfter: false, ipBefore: '', ipAfter: '', heapBefore: 0, heapAfter: 0, stackFree: 0 },
+    uptimeMs: 120000,
     otaMaxBytes: 1310720,
     clock: { ready: false, online: true, syncing: true, utc: 0, localTime: '', localDate: '', lastSyncUtc: 0, zone: 'UTC+7' },
     schedules: { enabled: false, entries: Array.from({ length: 8 }, () => ({ enabled: false, days: 0, minute: 0, power: false, favorite: -1 })) },
@@ -59,7 +63,7 @@ const path = require('path');
     document.execCommand = command => {
       if (command !== 'copy') return false;
       window.__copyCalls++;
-      window.__copiedValue = document.getElementById('localAddress').value;
+      window.__copiedValue = document.activeElement.value;
       return window.__copyWorks;
     };
   });
@@ -169,11 +173,23 @@ const path = require('path');
     return route.fulfill({ status: 404, json: { error: 'Unknown' } });
   });
 
+  // Without a successful state response, diagnostics have no snapshot to copy.
+  const idlePage = await browser.newPage();
+  await idlePage.route('http://deco-idle.test/**', route => new URL(route.request().url()).pathname === '/' ? route.fulfill({ status: 200, contentType: 'text/html', body: html }) : route.abort());
+  await idlePage.goto('http://deco-idle.test/');
+  await idlePage.waitForFunction(() => document.getElementById('connectionText').textContent === 'Mất kết nối');
+  assert(await idlePage.locator('#copyDiagnostics').isDisabled());
+  assert.equal(await idlePage.locator('#diagnosticData').inputValue(), '');
+  await idlePage.close();
+
   await page.goto('http://deco.test/');
   await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
   assert.equal(await page.locator('#brightnessText').textContent(), '5');
   assert(await page.locator('#startTimer').isDisabled());
-  assert((await page.locator('#footer').textContent()).includes('firmware 1.3.0'));
+  assert((await page.locator('#footer').textContent()).includes('firmware 1.3.1'));
+  assert((await page.locator('#planSaveDiagnostics').textContent()).includes('Chưa có thao tác lưu lịch'));
+  assert(!(await page.locator('#planSaveDiagnostics').textContent()).includes('undefined'));
+  assert(await page.locator('#diagnosticData').evaluate(e => e.readOnly));
   assert.deepEqual(await page.locator('#mode option').allTextContents(), modeLabels);
   assert.deepEqual(await page.locator('#mode option').evaluateAll(options => options.map(option => +option.value)), Array.from({ length: 14 }, (_, i) => i));
   assert.deepEqual(await page.locator('#effectGuide li strong').allTextContents(), modeLabels);
@@ -255,7 +271,7 @@ const path = require('path');
   commandDelay = 0;
   await page.locator('#mode').selectOption('1'); await page.waitForFunction(() => state.light.mode === 1);
 
-  await page.locator('details').filter({ has: page.locator('#wifiForm') }).locator('summary').click();
+  await page.locator('details').filter({ has: page.locator('#wifiForm') }).locator(':scope > summary').click();
   assert.equal(await page.locator('#localAddress').inputValue(), 'http://den-deco.local');
   assert((await page.locator('#apHelp').textContent()).includes('không có mật khẩu'));
   assert((await page.locator('#apHelp').textContent()).includes('5 giây'));
@@ -374,6 +390,84 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('scanStatus').textContent.includes('Thử lại sau'));
   assert(!(await page.locator('#scanWiFi').isDisabled()));
   scanGetError = '';
+
+  // Radio diagnostics distinguish a stale cached status from a real link,
+  // without requiring the user to copy the session token from the full API.
+  const radioBefore = structuredClone({ wifiConnected: s.wifiConnected, ip: s.ip, apActive: s.apActive, networkStatus: s.networkStatus, networkMessage: s.networkMessage, disconnectReason: s.disconnectReason, wifiDiagnostics: s.wifiDiagnostics });
+  s.wifiConnected = false; s.ip = ''; s.apActive = true; s.networkStatus = 'failed';
+  s.networkMessage = 'Xác thực với router hết thời gian (mã 2), chưa nhận IP. AP dự phòng đang mở; đèn sẽ thử lại.';
+  s.disconnectReason = 2; s.wifiDiagnostics = { ...s.wifiDiagnostics, status: 3, interfaceReady: false, associated: false, beginAttempts: 4 };
+  s.revision++;
+  await page.waitForFunction(() => document.getElementById('networkStatus').textContent.includes('mã 2'));
+  await page.locator('#wifiDiagnosticCard > summary').click();
+  assert((await page.locator('#wifiDiagnostics').textContent()).includes('liên kết router: Chưa'));
+  assert((await page.locator('#wifiDiagnostics').textContent()).includes('trạng thái: 3'));
+  assert((await page.locator('#wifiDiagnostics').textContent()).includes('mã ngắt: 2'));
+  s.wifiDiagnostics.cancelTimedOut = true; s.revision++;
+  await page.waitForFunction(() => document.getElementById('wifiDiagnostics').textContent.includes('Chưa hủy được kết nối trước'));
+  Object.assign(s, radioBefore); s.revision++;
+  await page.waitForFunction(() => document.getElementById('wifiDiagnostics').textContent.includes('liên kết router: Có'));
+  // A recovered link clears the current reason, while RAM keeps the preceding
+  // disconnect and completed save measurements. Only allowlisted scalars are copied.
+  s.disconnectReason = 0;
+  s.wifiDiagnostics = { ...s.wifiDiagnostics, lastDisconnectReason: 2, lastDisconnectAtMs: 114000, disconnectCount: 1, powerSave: 0, token: 'hidden-wifi-token' };
+  s.resources.password = 'hidden-resource-password';
+  s.planSaveDiagnostics = { ...s.planSaveDiagnostics, kind: 'sun', stage: 'complete', count: 1, startedAtMs: 113970, totalMs: 28, lightMs: 0, planMs: 17, applyMs: 1, responseMs: 10, successful: true, lightWritten: false, planWritten: true, onlineBefore: true, onlineAfter: true, associatedBefore: true, associatedAfter: true, interfaceBefore: true, interfaceAfter: true, ipBefore: s.ip, ipAfter: s.ip, heapBefore: 220000, heapAfter: 217000, stackFree: 3700, token: 'hidden-save-token' };
+  s.revision++;
+  await page.waitForFunction(() => document.getElementById('wifiDiagnostics').textContent.includes('lần ngắt gần nhất: mã 2'));
+  assert((await page.locator('#wifiDiagnostics').textContent()).includes('mã ngắt: 0'));
+  assert((await page.locator('#planSaveDiagnostics').textContent()).includes('lịch mặt trời #1'));
+  assert((await page.locator('#planSaveDiagnostics').textContent()).includes('lịch 17 ms'));
+  assert((await page.locator('#resourceDiagnostics').textContent()).includes('stack còn thấp nhất: 3800 byte'));
+  await page.evaluate(() => { window.__copyWorks = true; });
+  const diagnosticCopyBefore = await page.evaluate(() => window.__copyCalls);
+  await page.locator('#copyDiagnostics').click();
+  assert.equal(await page.evaluate(() => window.__copyCalls), diagnosticCopyBefore + 1);
+  const copiedDiagnostic = await page.evaluate(() => window.__copiedValue);
+  const diagnostic = JSON.parse(copiedDiagnostic);
+  assert.deepEqual(Object.keys(diagnostic).sort(), ['version', 'uptimeMs', 'hostname', 'wifiConnected', 'ip', 'networkStatus', 'apActive', 'apSSID', 'disconnectReason', 'wifiDiagnostics', 'resources', 'planSaveDiagnostics'].sort());
+  assert.equal(diagnostic.version, '1.3.1');
+  assert.equal(diagnostic.disconnectReason, 0);
+  assert.equal(diagnostic.wifiDiagnostics.lastDisconnectReason, 2);
+  assert.equal(diagnostic.wifiDiagnostics.lastDisconnectAtMs, 114000);
+  assert.equal(diagnostic.wifiDiagnostics.powerSave, 0);
+  assert.equal(diagnostic.planSaveDiagnostics.planMs, 17);
+  assert.equal(diagnostic.planSaveDiagnostics.responseMs, 10);
+  assert.equal(diagnostic.planSaveDiagnostics.ipAfter, s.ip);
+  assert.equal(diagnostic.resources.loopStackFree, 3800);
+  for (const secret of [s.token, 'hidden-wifi-token', 'hidden-save-token', 'hidden-resource-password', 'not-a-real-secret']) assert(!copiedDiagnostic.includes(secret));
+  assert(!/"(?:token|password|ssid|light|favorites|sun)"\s*:/.test(copiedDiagnostic));
+  // Failed automatic clipboard copy leaves a stable selection for Ctrl+C,
+  // including while background polling continues.
+  await page.evaluate(() => { window.__copyWorks = false; });
+  await page.locator('#copyDiagnostics').click();
+  assert((await page.locator('#notice').textContent()).includes('Ctrl+C'));
+  await page.waitForTimeout(550);
+  assert.equal(await page.locator('#diagnosticData').evaluate(e => e.selectionEnd - e.selectionStart), copiedDiagnostic.length);
+  offline = true;
+  await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Mất kết nối');
+  assert(!(await page.locator('#copyDiagnostics').isDisabled()));
+  await page.evaluate(() => { window.__copyWorks = true; });
+  await page.locator('#copyDiagnostics').click();
+  assert.equal(await page.evaluate(() => window.__copiedValue), copiedDiagnostic);
+  offline = false;
+  await page.waitForFunction(() => document.getElementById('connectionText').textContent === 'Đã kết nối');
+  // Earlier firmware lacks all three diagnostic objects; keep a small snapshot
+  // and clear old summaries instead of showing previous firmware measurements.
+  const diagnosticsBeforeLegacy = structuredClone({ wifiDiagnostics: s.wifiDiagnostics, resources: s.resources, planSaveDiagnostics: s.planSaveDiagnostics });
+  delete s.wifiDiagnostics; delete s.resources; delete s.planSaveDiagnostics; s.revision++;
+  await page.waitForFunction(() => document.getElementById('planSaveDiagnostics').textContent.includes('Firmware chưa có'));
+  assert((await page.locator('#wifiDiagnostics').textContent()).includes('Firmware chưa có'));
+  assert.equal(await page.locator('#resourceDiagnostics').textContent(), '');
+  await page.locator('#copyDiagnostics').click();
+  const oldDiagnostic = JSON.parse(await page.evaluate(() => window.__copiedValue));
+  assert(!('wifiDiagnostics' in oldDiagnostic));
+  assert(!('resources' in oldDiagnostic));
+  assert(!('planSaveDiagnostics' in oldDiagnostic));
+  assert(!('token' in oldDiagnostic));
+  Object.assign(s, diagnosticsBeforeLegacy); s.revision++;
+  await page.waitForFunction(() => document.getElementById('planSaveDiagnostics').textContent.includes('lịch mặt trời #1'));
+  await page.locator('#wifiDiagnosticCard > summary').click();
 
   // Automation lives in independent drafts: the 250 ms full-state poll may update
   // the clock/status, but must never replace a schedule or solar edit.
@@ -643,7 +737,7 @@ const path = require('path');
   await page.screenshot({ path: path.join(shotDir, 'web-desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   page.on('dialog', d => d.accept());
-  await page.locator('details').filter({ has: page.locator('#otaForm') }).locator('summary').click();
+  await page.locator('details').filter({ has: page.locator('#otaForm') }).locator(':scope > summary').click();
   await page.locator('#firmware').setInputFiles({ name: 'firmware.bin', mimeType: 'application/octet-stream', buffer: Buffer.alloc(64) });
   // An OTA rejection must not leave a queued, unexecuted mode displayed as active.
   commandDelay = 400; otaDelay = 850; otaError = 'File cập nhật không hợp lệ.';
@@ -651,6 +745,7 @@ const path = require('path');
   await page.locator('#mode').selectOption('6');
   await page.locator('#mode').selectOption('7');
   await page.locator('#uploadFirmware').click();
+  assert(await page.locator('#copyDiagnostics').isDisabled());
   await page.waitForFunction(() => document.getElementById('otaStatus').textContent.includes('không hợp lệ'));
   await page.waitForFunction(() => state.light.mode === 6 && document.getElementById('mode').value === '6');
   assert.deepEqual(commands.slice(queueStart).map(c => [c.type, c.value]), [['mode', 6]]);
@@ -659,7 +754,8 @@ const path = require('path');
   await page.waitForFunction(() => document.getElementById('otaStatus').textContent.includes('thành công'));
   assert.equal(otaCalls, 2);
   assert(await page.locator('#scanWiFi').isDisabled());
+  assert(await page.locator('#copyDiagnostics').isDisabled());
   assert.equal(errors.length, 0, errors.join('\n'));
   await browser.close();
-  console.log('PASS: weekly 8-slot schedules, HH:MM/day/favorite validation, solar E6/range/HCM/warm/favorite controls, draft preservation/error/discard/late-save races, clock sync and WiFi-loss status, offline no-replay; retained 14-mode/tint/help/light/favorites/timer/OTA/WiFi/hostname/clipboard/layout checks, no JS errors');
+  console.log('PASS: weekly 8-slot schedules, HH:MM/day/favorite validation, solar E6/range/HCM/warm/favorite controls, draft preservation/error/discard/late-save races, clock sync and WiFi-loss status, offline no-replay; private RAM save/resource/radio diagnostics, HTTP clipboard fallback and offline/legacy/OTA copy behavior; retained 14-mode/tint/help/light/favorites/timer/OTA/WiFi/hostname/clipboard/layout checks, no JS errors');
 })().catch(e => { console.error(e); process.exit(1); });

@@ -1,4 +1,4 @@
-/* Den Deco 1.3.0 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
+/* Den Deco 1.3.1 — ESP32-C3 SuperMini / 20 WS2812B / four TTP223.
  * Arduino ESP32 3.3.1, Adafruit NeoPixel 1.15.5, ArduinoJson 7.4.3.
  * Select an OTA partition scheme; initial installation uses USB.
  */
@@ -12,7 +12,10 @@
 #include <atomic>
 #include <mdns.h>
 #include <esp_wifi.h>
+#include <esp_system.h>
 #include <esp_sntp.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <time.h>
 #include "Config.h"
 #include "Core.h"
@@ -21,7 +24,7 @@
 #include "Automation.h"
 #include "WebUI.h"
 using namespace Deco;
-const char* VERSION="1.3.0";
+const char* VERSION="1.3.1";
 Controller lamp;
 Renderer renderer;
 Touch touch;
@@ -45,10 +48,17 @@ String suffix,apName,hostname,sessionToken;
 bool apRunning=false,mdnsRunning=false,networkPending=false,otaBusy=false,otaSuccess=false,otaPausedAutomations=false;
 ConnectionPolicy connection;
 std::atomic<int> disconnectReason{0};
+std::atomic<uint32_t> disconnectAck{0};
+std::atomic<int> lastWiFiEvent{-1};
+std::atomic<int> lastDisconnectReason{0};
+std::atomic<uint32_t> lastDisconnectAt{0},disconnectCount{0};
+ConnectionStartGate wifiStart;
+bool wifiAttemptStarted=false,wifiStartTimedOut=false;
+int wifiBeginResult=-1;
+uint32_t wifiBeginAttempts=0,healthPrintedAt=0;
+esp_err_t wifiDisconnectResult=ESP_OK;
 uint32_t networkApplyAt=0,restartAt=0,lastFrame=0;
 bool restartPending=false;
-bool wifiBeginPending=false;
-uint32_t wifiBeginAt=0;
 String scanStatus="idle",scanMessage;
 JsonDocument scanResults;
 bool scanRunning=false,scanStarted=false;
@@ -59,6 +69,15 @@ String otaError;
 size_t otaExpected=0,otaReceived=0,otaHeaderCount=0;
 uint8_t otaHeader[sizeof(esp_image_header_t)+8+4];
 uint32_t otaLastTraffic=0;
+// RAM breadcrumbs survive a reconnect, but intentionally do not add NVS writes.
+struct PlanSaveDiagnostics {
+ const char* kind="",*stage="idle";
+ uint32_t count=0,startedAt=0,totalMs=0,lightMs=0,planMs=0,applyMs=0,responseMs=0;
+ uint32_t heapBefore=0,heapAfter=0,stackFree=0;
+ uint32_t ipBefore=0,ipAfter=0;
+ bool successful=false,lightWritten=false,planWritten=false,onlineBefore=false,onlineAfter=false;
+ bool associatedBefore=false,associatedAfter=false,interfaceBefore=false,interfaceAfter=false;
+} planSave;
 
 int64_t utcNow(){return int64_t(time(nullptr));}
 bool readyAt(int64_t utc){ScheduleWallTime wall;return clockReady&&localScheduleTime(utc,wall);}
@@ -68,7 +87,31 @@ String clockText(int64_t utc,const char* format){
 }
 void rebaselineAutomations(){int64_t utc=utcNow();bool ready=readyAt(utc);scheduler.rebaseline(utc,ready);solarScheduler.rebaseline(utc,ready);}
 
-bool homeOnline(){return network.ssid.length()>0&&!wifiBeginPending&&WiFi.status()==WL_CONNECTED&&uint32_t(WiFi.localIP())!=0;}
+bool stationAssociated(){wifi_ap_record_t ap;return esp_wifi_sta_get_ap_info(&ap)==ESP_OK;}
+bool homeOnline(){
+ bool configured=network.ssid.length()>0,pending=wifiStart.pending||!wifiAttemptStarted,ready=WiFi.isConnected();
+ if(!configured||pending||!ready)return false;
+ // AUTH_EXPIRE can leave Arduino's cached status at WL_CONNECTED. Use
+ // live interface readiness and physical association before closing AP.
+ return homeConnectionOnline(configured,pending,ready,stationAssociated(),uint32_t(WiFi.localIP()));
+}
+void planSaveMark(const char* stage){
+ planSave.stage=stage;planSave.totalMs=uint32_t(millis()-planSave.startedAt);
+ planSave.heapAfter=ESP.getFreeHeap();planSave.stackFree=uxTaskGetStackHighWaterMark(nullptr);planSave.onlineAfter=homeOnline();
+ planSave.associatedAfter=stationAssociated();planSave.interfaceAfter=WiFi.isConnected();planSave.ipAfter=uint32_t(WiFi.localIP());
+ Serial.printf("Plan save #%lu %s: %s elapsed=%lu ms online=%d heap=%lu stackFree=%lu\n",static_cast<unsigned long>(planSave.count),planSave.kind,stage,static_cast<unsigned long>(planSave.totalMs),planSave.onlineAfter,static_cast<unsigned long>(planSave.heapAfter),static_cast<unsigned long>(planSave.stackFree));
+}
+void planSaveBegin(const char* kind){
+ uint32_t count=planSave.count+1;planSave=PlanSaveDiagnostics();planSave.count=count;planSave.kind=kind;planSave.startedAt=millis();
+ planSave.heapBefore=ESP.getFreeHeap();planSave.onlineBefore=homeOnline();planSaveMark("light");
+ planSave.associatedBefore=planSave.associatedAfter;planSave.interfaceBefore=planSave.interfaceAfter;planSave.ipBefore=planSave.ipAfter;
+}
+void cancelStationAttempt(){
+ // Core 3.3.1's WiFi.disconnect() can return without cancelling an
+ // unassociated authentication attempt. Cancel at the driver directly.
+ wifiDisconnectResult=esp_wifi_disconnect();
+ if(wifiDisconnectResult!=ESP_OK&&wifiDisconnectResult!=ESP_ERR_WIFI_NOT_CONNECT)Serial.printf("STA cancel: %s\n",esp_err_to_name(wifiDisconnectResult));
+}
 void stopMDNS(){MDNS.end();mdnsRunning=false;hostname=network.hostname;hostnameCollision=0;mdnsCheckedAt=millis()-2000;}
 void clearScan(){if(scanRunning){esp_wifi_scan_stop();WiFi.scanDelete();}scanRunning=false;scanStatus="idle";scanMessage="";scanResults.clear();}
 void startAP(){
@@ -85,14 +128,14 @@ void stopAP(){
 }
 void connectWiFi(){
  stopMDNS();clearScan();
- WiFi.setAutoReconnect(false);WiFi.disconnect(false,false);
+ wifiStart.cancel();wifiAttemptStarted=false;wifiStartTimedOut=false;wifiBeginResult=-1;
+ WiFi.setAutoReconnect(false);
  WiFi.mode(apRunning?WIFI_AP_STA:WIFI_STA);
  WiFi.setHostname(network.hostname.c_str());WiFi.setSleep(false);
- disconnectReason.store(0);connection.begin(millis(),network.ssid.length()>0);
- // Disconnect is asynchronous. Waiting for its event avoids begin() treating
- // stale WL_CONNECTED as a successful retry of the same saved credentials.
- wifiBeginPending=network.ssid.length()>0;wifiBeginAt=millis();
- if(!wifiBeginPending)startAP();
+ uint32_t ack=disconnectAck.load();cancelStationAttempt();
+ uint32_t now=millis();disconnectReason.store(0);connection.begin(now,network.ssid.length()>0);
+ if(network.ssid.length())wifiStart.begin(now,ack);
+ else startAP();
 }
 void resetWiFi(){
  NetworkConfig next=network;next.ssid="";next.password="";
@@ -108,7 +151,9 @@ String networkMessage(){
  if(connection.phase==ConnectionPolicy::Unconfigured)return "Chưa lưu WiFi nhà. Kết nối AP mở để cài đặt.";
  if(connection.phase==ConnectionPolicy::Connected)return "Đã kết nối WiFi nhà và nhận địa chỉ IP. AP đã tắt.";
  if(connection.phase==ConnectionPolicy::Connecting)return "Đang kết nối WiFi 2,4 GHz và chờ địa chỉ IP (tối đa 30 giây).";
+ if(wifiStartTimedOut)return "Chưa hủy được lần kết nối trước; AP dự phòng đang mở. Đèn sẽ thử lại.";
  int reason=disconnectReason.load();
+ if(reason==2)return "Xác thực với router hết thời gian (mã 2), chưa nhận IP. AP dự phòng đang mở; đèn sẽ thử lại.";
  if(reason==201)return "Không tìm thấy mạng đã lưu. Kiểm tra SSID và WiFi 2,4 GHz; AP dự phòng đang mở.";
  if(reason==202||reason==15||reason==204)return "Xác thực WiFi thất bại. Kiểm tra mật khẩu hoặc bảo mật router; AP dự phòng đang mở.";
  return "Chưa kết nối được hoặc chưa nhận IP sau 30 giây. AP dự phòng đang mở; đèn sẽ thử lại.";
@@ -140,9 +185,17 @@ void networkTick(uint32_t now){
  now=millis(); // Touch reset/WiFi calls may have advanced time since loop began.
  if(networkPending&&uint32_t(now-networkApplyAt)>=1200){networkPending=false;connectWiFi();return;}
  scanTick(now);
- if(wifiBeginPending&&uint32_t(now-wifiBeginAt)>=50&&WiFi.status()!=WL_CONNECTED){
-  wifiBeginPending=false;WiFi.begin(network.ssid.c_str(),network.password.length()?network.password.c_str():nullptr);
+ if(wifiStart.pending){
+  ConnectionStartGate::Decision decision=wifiStart.update(now,stationAssociated(),disconnectAck.load());
+  if(decision==ConnectionStartGate::Start){
+   wifiAttemptStarted=true;++wifiBeginAttempts;
+   wifiBeginResult=int(WiFi.begin(network.ssid.c_str(),network.password.length()?network.password.c_str():nullptr));
+   Serial.printf("STA begin #%lu: status=%d\n",static_cast<unsigned long>(wifiBeginAttempts),wifiBeginResult);
+  }else if(decision==ConnectionStartGate::TimedOut){
+   wifiStartTimedOut=true;wifiAttemptStarted=false;connection.phase=ConnectionPolicy::Failed;connection.startedAt=millis();startAP();
+  }
  }
+ now=millis();
  ConnectionPolicy::Phase before=connection.phase;
  ConnectionPolicy::Action action=connection.update(now,homeOnline(),scanRunning);
  if(connection.phase==ConnectionPolicy::Connected){
@@ -160,7 +213,7 @@ void networkTick(uint32_t now){
   }
  }else{
   if(before==ConnectionPolicy::Connected){connectWiFi();return;}
-  if(action==ConnectionPolicy::OpenAP){if(before==ConnectionPolicy::Connecting){wifiBeginPending=false;WiFi.disconnect(false,false);}startAP();}
+  if(action==ConnectionPolicy::OpenAP){if(before==ConnectionPolicy::Connecting){wifiStart.cancel();wifiAttemptStarted=false;cancelStationAttempt();}startAP();}
   else if(action==ConnectionPolicy::Retry)connectWiFi();
  }
 }
@@ -284,6 +337,12 @@ void stateDocument(JsonDocument& d){
  d["ssid"]=network.ssid;d["wifiOpen"]=network.ssid.length()>0&&network.password.length()==0;d["wifiConnected"]=homeOnline();d["ip"]=homeOnline()?WiFi.localIP().toString():String("");d["apActive"]=apRunning;d["apSSID"]=apName;d["hostname"]=hostname;
  d["requestedHostname"]=network.hostname;d["localUrl"]="http://"+hostname+".local";d["mdnsReady"]=mdnsRunning;
  d["networkStatus"]=networkStatus();d["networkMessage"]=networkMessage();d["disconnectReason"]=disconnectReason.load();
+ JsonObject wifi=d["wifiDiagnostics"].to<JsonObject>();wifi["status"]=int(WiFi.status());wifi["interfaceReady"]=WiFi.isConnected();wifi["associated"]=stationAssociated();wifi["beginResult"]=wifiBeginResult;wifi["beginAttempts"]=wifiBeginAttempts;wifi["pending"]=wifiStart.pending;wifi["cancelTimedOut"]=wifiStartTimedOut;wifi["disconnectError"]=(wifiDisconnectResult==ESP_OK||wifiDisconnectResult==ESP_ERR_WIFI_NOT_CONNECT)?"":esp_err_to_name(wifiDisconnectResult);wifi["lastEvent"]=lastWiFiEvent.load();
+ wifi["lastDisconnectReason"]=lastDisconnectReason.load();wifi["lastDisconnectAtMs"]=lastDisconnectAt.load();wifi["disconnectCount"]=disconnectCount.load();
+ wifi_ps_type_t ps;wifi["powerSave"]=(esp_wifi_get_ps(&ps)==ESP_OK)?int(ps):-1;
+ JsonObject resources=d["resources"].to<JsonObject>();resources["resetReason"]=int(esp_reset_reason());resources["freeHeap"]=ESP.getFreeHeap();resources["minFreeHeap"]=ESP.getMinFreeHeap();resources["largestFreeBlock"]=ESP.getMaxAllocHeap();resources["loopStackFree"]=uxTaskGetStackHighWaterMark(nullptr);
+ JsonObject save=d["planSaveDiagnostics"].to<JsonObject>();save["kind"]=planSave.kind;save["stage"]=planSave.stage;save["count"]=planSave.count;save["startedAtMs"]=planSave.startedAt;save["totalMs"]=planSave.totalMs;save["lightMs"]=planSave.lightMs;save["planMs"]=planSave.planMs;save["applyMs"]=planSave.applyMs;save["responseMs"]=planSave.responseMs;save["successful"]=planSave.successful;save["lightWritten"]=planSave.lightWritten;save["planWritten"]=planSave.planWritten;save["onlineBefore"]=planSave.onlineBefore;save["onlineAfter"]=planSave.onlineAfter;save["heapBefore"]=planSave.heapBefore;save["heapAfter"]=planSave.heapAfter;save["stackFree"]=planSave.stackFree;
+ save["associatedBefore"]=planSave.associatedBefore;save["associatedAfter"]=planSave.associatedAfter;save["interfaceBefore"]=planSave.interfaceBefore;save["interfaceAfter"]=planSave.interfaceAfter;save["ipBefore"]=IPAddress(planSave.ipBefore).toString();save["ipAfter"]=IPAddress(planSave.ipAfter).toString();
  int64_t utc=utcNow();bool ready=readyAt(utc);
  JsonObject clock=d["clock"].to<JsonObject>();clock["ready"]=ready;clock["online"]=homeOnline();clock["syncing"]=ntpStarted&&!ready;clock["utc"]=ready?utc:0;clock["lastSyncUtc"]=lastSyncUtc;clock["zone"]="UTC+7";
  clock["localTime"]=ready?clockText(utc,"%H:%M:%S"):String("");clock["localDate"]=ready?clockText(utc,"%d/%m/%Y"):String("");
@@ -295,6 +354,19 @@ void stateDocument(JsonDocument& d){
  const esp_partition_t* part=esp_ota_get_next_update_partition(nullptr);d["otaMaxBytes"]=part?part->size:0;d["uptimeMs"]=now;
 }
 void getState(){JsonDocument d;stateDocument(d);sendJson(d);}
+bool persistPlan(const char* kind,const ScheduleConfig& nextSchedules,const SolarConfig& nextSun){
+ planSaveBegin(kind);stopDawn(millis());
+ uint32_t started=millis(),writes=storage.writes;bool lightOK=storage.saveNow(lamp.settings);
+ planSave.lightMs=uint32_t(millis()-started);planSave.lightWritten=storage.writes!=writes;
+ if(!lightOK){planSaveMark("failed-light");fail(500,"Chưa lưu được cấu hình đèn; chưa thay đổi lịch");return false;}
+ planSaveMark("plan");started=millis();writes=planStore.writes;bool planOK=planStore.save(nextSchedules,nextSun);
+ planSave.planMs=uint32_t(millis()-started);planSave.planWritten=planStore.writes!=writes;
+ if(!planOK){planSaveMark("failed-plan");fail(500,planStore.error.length()?planStore.error:String("Không lưu được lịch"));return false;}
+ planSave.successful=true;planSaveMark("apply");return true;
+}
+void respondPlanSave(){
+ planSaveMark("responding");uint32_t started=millis();getState();planSave.responseMs=uint32_t(millis()-started);planSaveMark("complete");
+}
 bool savedFavorite(int favorite){return favorite>=0&&favorite<3&&lamp.settings.favorites[favorite].valid&&validLight(lamp.settings.favorites[favorite].light);}
 void handleSchedules(){
  JsonDocument d;if(!parseBody(d))return;ScheduleConfig next;
@@ -302,19 +374,15 @@ void handleSchedules(){
  if(next.enabled)for(const auto& entry:next.entries)if(entry.enabled&&entry.power&&!savedFavorite(entry.favorite)){fail(400,"Lưu mục yêu thích trước khi bật lịch dùng mục đó");return;}
  // Favorites may still be within the normal 10-second debounce. Commit
  // them before a referencing plan so reboot cannot leave dangling presets.
- stopDawn(millis());
- if(!storage.saveNow(lamp.settings)){fail(500,"Chưa lưu được cấu hình đèn; chưa thay đổi lịch");return;}
- if(!planStore.save(next,solar)){fail(500,planStore.error.length()?planStore.error:String("Không lưu được lịch"));return;}
- schedules=next;int64_t utc=utcNow();scheduler.configure(schedules,utc,readyAt(utc));++lamp.revision;automationError="";getState();
+ if(!persistPlan("weekly",next,solar))return;
+ uint32_t started=millis();schedules=next;int64_t utc=utcNow();scheduler.configure(schedules,utc,readyAt(utc));++lamp.revision;automationError="";planSave.applyMs=uint32_t(millis()-started);respondPlanSave();
 }
 void handleSun(){
  JsonDocument d;if(!parseBody(d))return;SolarConfig next;
  if(!solarFromJson(d.as<JsonObjectConst>(),next)){fail(400,"Vị trí hoặc cấu hình mặt trời ngoài phạm vi");return;}
  for(const SolarEntry* entry:{&next.dawn,&next.dusk})if(entry->enabled&&entry->favorite>=0&&!savedFavorite(entry->favorite)){fail(400,"Lưu mục yêu thích trước khi bật tính năng dùng mục đó");return;}
- stopDawn(millis());
- if(!storage.saveNow(lamp.settings)){fail(500,"Chưa lưu được cấu hình đèn; chưa thay đổi tính năng mặt trời");return;}
- if(!planStore.save(schedules,next)){fail(500,planStore.error.length()?planStore.error:String("Không lưu được tính năng mặt trời"));return;}
- solar=next;int64_t utc=utcNow();solarScheduler.configure(solar,utc,readyAt(utc));++lamp.revision;automationError="";getState();
+ if(!persistPlan("sun",schedules,next))return;
+ uint32_t started=millis();solar=next;int64_t utc=utcNow();solarScheduler.configure(solar,utc,readyAt(utc));++lamp.revision;automationError="";planSave.applyMs=uint32_t(millis()-started);respondPlanSave();
 }
 void handleCommand(){
  JsonDocument d;if(!parseBody(d))return;String type=d["type"].as<String>();Command c(Action::Power);int n=0;bool valid=true;
@@ -425,6 +493,7 @@ void finishOTA(){
 }
 void setup(){
  Serial.begin(115200); // Do not wait for a serial monitor before restoring the lamp.
+ Serial.printf("Boot: reset reason=%d\n",int(esp_reset_reason()));
  pinMode(Config::POWER_PIN,INPUT_PULLDOWN);pinMode(Config::MINUS_PIN,INPUT_PULLDOWN);pinMode(Config::PLUS_PIN,INPUT_PULLDOWN);pinMode(Config::MODE_PIN,INPUT_PULLDOWN);
  leds.begin();leds.clear();leds.show();storage.begin(lamp.settings);renderer.begin(lamp.settings,millis());touch.begin(millis());
  planStore.begin(schedules,solar);scheduler.begin(schedules);solarScheduler.begin(solar);
@@ -432,7 +501,13 @@ void setup(){
  bool networkOK=netStore.begin(network);if(!networkOK)Serial.println("Network NVS unavailable or invalid; using provisioning defaults");
  hostname=network.hostname;
  WiFi.persistent(false);WiFi.mode(WIFI_STA);
- WiFi.onEvent([](WiFiEvent_t event,WiFiEventInfo_t info){if(event==ARDUINO_EVENT_WIFI_STA_DISCONNECTED&&info.wifi_sta_disconnected.reason!=8)disconnectReason.store(info.wifi_sta_disconnected.reason);});
+ WiFi.onEvent([](WiFiEvent_t event,WiFiEventInfo_t info){
+  if(event==ARDUINO_EVENT_WIFI_STA_DISCONNECTED){
+   int reason=info.wifi_sta_disconnected.reason;
+   if(reason==WIFI_REASON_ASSOC_LEAVE)disconnectAck.fetch_add(1);else{disconnectReason.store(reason);lastDisconnectReason.store(reason);lastDisconnectAt.store(millis());disconnectCount.fetch_add(1);}
+   lastWiFiEvent.store(int(event));Serial.printf("STA disconnected: reason=%d\n",reason);
+  }else if(event==ARDUINO_EVENT_WIFI_STA_CONNECTED||event==ARDUINO_EVENT_WIFI_STA_GOT_IP||event==ARDUINO_EVENT_WIFI_STA_LOST_IP){lastWiFiEvent.store(int(event));Serial.printf("STA event=%d\n",int(event));}
+ });
  connectWiFi();
  const char* headers[]={"Origin","Content-Type","X-Deco-Token","Sec-Fetch-Site","X-Firmware-Size"};server.collectHeaders(headers,5);
  server.on("/",HTTP_GET,[]{noCache();server.sendHeader("Content-Security-Policy","default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'");server.send_P(200,"text/html; charset=utf-8",WEB_UI);});
@@ -455,6 +530,9 @@ void loop(){
   if(!dawnRamp.active)storage.tick(lamp.settings,now);
   if(uint32_t(now-lastFrame)>=Config::FRAME_MS){lastFrame=now;renderFrame(now);}
   networkTick(now);
+  if(uint32_t(now-healthPrintedAt)>=10000){
+   healthPrintedAt=now;Serial.printf("Net: online=%d status=%d associated=%d IP=%s AP=%d host=%s.local heap=%lu uptime=%lu\n",homeOnline(),int(WiFi.status()),stationAssociated(),WiFi.localIP().toString().c_str(),apRunning,hostname.c_str(),static_cast<unsigned long>(ESP.getFreeHeap()),static_cast<unsigned long>(millis()));
+  }
  }
  server.handleClient();delay(1);
 }
